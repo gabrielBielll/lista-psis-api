@@ -125,21 +125,3 @@
 
 (defn init [] (println "Iniciando servidor..."))
 (defn destroy [] (println "Parando servidor..."))
-```
-
-### Próximos Passos
-
-1.  **Atualize o Código:** Substitua o conteúdo de `src/clojure_backend_api/core.clj`.
-2.  **Commit & Push:** Salve e envie para o GitHub.
-    ```bash
-    git add .
-    git commit -m "fix: Restaura a função update-horarios-handler que foi deletada"
-    git push
-    ```
-3.  **Aguarde o Deploy:** Espere o Render terminar a atualização. O erro de compilação não deve mais acontecer.
-4.  **Teste com `curl`:**
-    ```bash
-    curl https://lista-psis-api.onrender.com/api/horarios
-    ```
-
-Desta vez o deploy deve ser bem-sucedido e a API finalmente retornará o resultado correto. Mais uma vez, peço desculpas pelo er
