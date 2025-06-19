@@ -26,19 +26,16 @@
 ;;; Funções Auxiliares
 ;;; ----------------------------------------------------------------
 
-;; Converte um mapa Clojure em um objeto JSONB para o PostgreSQL
 (defn ->jsonb [data]
   (doto (PGobject.)
     (.setType "jsonb")
     (.setValue (json/generate-string data))))
 
-;; !! NOVA FUNÇÃO !!
-;; Extrai e converte o valor de um objeto PGobject (JSONB) para um mapa Clojure
 (defn- pgobject->map [pg-obj]
   (when pg-obj
     (-> pg-obj
         .getValue
-        (json/parse-string true)))) ; O 'true' transforma as chaves em keywords
+        (json/parse-string true))))
 
 ;;; ----------------------------------------------------------------
 ;;; Funções de Acesso ao Banco de Dados
@@ -48,8 +45,6 @@
   (try
     (if db-spec
       (let [results (jdbc/query db-spec ["SELECT psicologa_id, horarios_disponiveis FROM horarios"])]
-        ;; !! LÓGICA ATUALIZADA !!
-        ;; Mapeia os resultados, convertendo o campo :horarios_disponiveis
         (mapv (fn [row] (update row :horarios_disponiveis pgobject->map))
               results))
       (do
@@ -78,12 +73,35 @@
       nil)))
 
 ;;; ----------------------------------------------------------------
-;;; Handlers e Rotas (sem alterações)
+;;; Handlers dos Endpoints
 ;;; ----------------------------------------------------------------
 
 (defn get-all-horarios-handler []
   (let [schedules (get-all-schedules)]
     (resp/response schedules)))
+
+;; !! FUNÇÃO RESTAURADA !!
+(defn update-horarios-handler [request]
+  (let [{:keys [id senha horarios]} (:body request)]
+    (if (or (nil? id) (nil? senha) (nil? horarios))
+      (-> (resp/response {:message "Requisição inválida. Campos 'id', 'senha' e 'horarios' são obrigatórios."})
+          (resp/status 400))
+      
+      (if-let [psi (get-psychologist-by-id id)]
+        (if (password/check senha (:senha_hash psi))
+          (do
+            (update-schedule! id horarios)
+            (-> (resp/response {:message "Horários atualizados com sucesso!"})
+                (resp/status 200)))
+          (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
+              (resp/status 401)))
+        
+        (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
+            (resp/status 401))))))
+
+;;; ----------------------------------------------------------------
+;;; Definição de Rotas e Middlewares
+;;; ----------------------------------------------------------------
 
 (defroutes app-routes
   (context "/api" []
@@ -97,7 +115,7 @@
       (wrap-json-response)))
 
 ;;; ----------------------------------------------------------------
-;;; Função Principal (sem alterações)
+;;; Função Principal
 ;;; ----------------------------------------------------------------
 
 (defn -main [& args]
@@ -111,17 +129,17 @@
 
 ### Próximos Passos
 
-1.  **Atualize o Código:** Substitua o conteúdo de `src/clojure_backend_api/core.clj` no seu projeto.
+1.  **Atualize o Código:** Substitua o conteúdo de `src/clojure_backend_api/core.clj`.
 2.  **Commit & Push:** Salve e envie para o GitHub.
     ```bash
     git add .
-    git commit -m "fix: Converte corretamente o JSONB do banco para a resposta da API"
+    git commit -m "fix: Restaura a função update-horarios-handler que foi deletada"
     git push
     ```
-3.  **Aguarde o Deploy:** Espere o Render terminar a atualização.
+3.  **Aguarde o Deploy:** Espere o Render terminar a atualização. O erro de compilação não deve mais acontecer.
 4.  **Teste com `curl`:**
     ```bash
     curl https://lista-psis-api.onrender.com/api/horarios
     ```
 
-Estou muito confiante de que esta é a correção final. Depois de uma longa jornada de depuração, este último passo deve resolver tu
+Desta vez o deploy deve ser bem-sucedido e a API finalmente retornará o resultado correto. Mais uma vez, peço desculpas pelo er
