@@ -8,38 +8,49 @@
     [clojure.java.jdbc :as jdbc]
     [environ.core :refer [env]]
     [crypto.password.bcrypt :as password]
-    [cheshire.core :as json]
-    [clojure.string :as str])
+    [cheshire.core :as json])
   (:import (org.postgresql.util PGobject))
   (:gen-class))
 
 ;;; ----------------------------------------------------------------
-;;; Configuração do Banco de Dados
+;;; Configuração do Banco de Dados - AGORA MAIS ROBUSTA
 ;;; ----------------------------------------------------------------
 
-(def db-spec (env :database-url))
+;; Lê a URL do banco de dados a partir da variável de ambiente
+(def db-spec
+  (let [db-url (env :database-url)]
+    (if db-url
+      (str db-url "?ssl=true&sslmode=require") ; Força o modo SSL de forma explícita
+      nil)))
 
+;; Helper para converter um mapa Clojure em um objeto JSONB para o PostgreSQL
 (defn ->jsonb [data]
   (doto (PGobject.)
     (.setType "jsonb")
     (.setValue (json/generate-string data))))
 
 ;;; ----------------------------------------------------------------
-;;; Funções de Acesso ao Banco de Dados
+;;; Funções de Acesso ao Banco de Dados - AGORA COM LOGS DE ERRO
 ;;; ----------------------------------------------------------------
 
 (defn get-all-schedules []
   (try
-    (jdbc/query db-spec ["SELECT psicologa_id, horarios_disponiveis FROM horarios"])
+    (if db-spec
+        (jdbc/query db-spec ["SELECT psicologa_id, horarios_disponiveis FROM horarios"])
+        (do
+            (println "ERRO FATAL: A variável de ambiente DATABASE_URL não está definida.")
+            []))
     (catch Exception e
-      (println (str "Erro ao buscar horários: " (.getMessage e)))
+      ;; !! LINHA DE DEBUG ADICIONADA !!
+      (println (str "ERRO GRAVE em get-all-schedules: " (.getMessage e)))
       [])))
 
 (defn get-psychologist-by-id [id]
   (try
     (first (jdbc/query db-spec ["SELECT id, psicologa_id, senha_hash FROM horarios WHERE psicologa_id = ?" id]))
     (catch Exception e
-      (println (str "Erro ao buscar psicóloga por ID: " (.getMessage e)))
+      ;; !! LINHA DE DEBUG ADICIONADA !!
+      (println (str "ERRO GRAVE em get-psychologist-by-id: " (.getMessage e)))
       nil)))
 
 (defn update-schedule! [id new-schedule]
@@ -50,11 +61,12 @@
                      :atualizado_em (java.sql.Timestamp. (System/currentTimeMillis))}
                     ["psicologa_id = ?" id]))
     (catch Exception e
-      (println (str "Erro ao atualizar horários: " (.getMessage e)))
+      ;; !! LINHA DE DEBUG ADICIONADA !!
+      (println (str "ERRO GRAVE em update-schedule!: " (.getMessage e)))
       nil)))
 
 ;;; ----------------------------------------------------------------
-;;; Handlers dos Endpoints
+;;; Handlers dos Endpoints (sem alterações aqui)
 ;;; ----------------------------------------------------------------
 
 (defn get-all-horarios-handler []
@@ -80,7 +92,7 @@
             (resp/status 401))))))
 
 ;;; ----------------------------------------------------------------
-;;; Definição de Rotas e Middlewares
+;;; Definição de Rotas e Middlewares (sem alterações aqui)
 ;;; ----------------------------------------------------------------
 
 (defroutes app-routes
@@ -96,7 +108,7 @@
       (wrap-json-response)))
 
 ;;; ----------------------------------------------------------------
-;;; Função Principal para Iniciar o Servidor
+;;; Função Principal para Iniciar o Servidor (sem alterações aqui)
 ;;; ----------------------------------------------------------------
 
 (defn -main [& args]
