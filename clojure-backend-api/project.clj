@@ -11,7 +11,7 @@
                  [org.clojure/java.jdbc "0.7.12"]
                  [org.postgresql/postgresql "42.5.0"]
                  [environ "1.2.0"]
-                 [crypto-password "0.3.0"]
+                 [buddy/buddy-hashers "1.8.1"] ; Nova biblioteca de senhas
                  [cheshire "5.11.0"]]
 
   :main ^:skip-aot clojure-backend-api.core
