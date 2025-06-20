@@ -87,15 +87,19 @@
           (resp/status 400))
       
       (if-let [psi (get-psychologist-by-id id)]
-        ;; !! SEGURANÇA REATIVADA !!
-        ;; A verificação da senha está agora ativa.
-        (if (password/check senha (:senha_hash psi))
-          (do
-            (update-schedule! id horarios)
-            (-> (resp/response {:message "Horários atualizados com sucesso!"})
-                (resp/status 200)))
-          (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
-              (resp/status 401)))
+        (let [stored-hash (:senha_hash psi)]
+          
+          ;; !! LINHAS DE DEBUG ADICIONADAS !!
+          (println (str "DEBUG: Tipo da senha_hash do banco: " (type stored-hash)))
+          (println (str "DEBUG: Valor da senha_hash do banco: " stored-hash))
+
+          (if (password/check senha stored-hash)
+            (do
+              (update-schedule! id horarios)
+              (-> (resp/response {:message "Horários atualizados com sucesso!"})
+                  (resp/status 200)))
+            (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
+                (resp/status 401))))
         
         (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
             (resp/status 401))))))
