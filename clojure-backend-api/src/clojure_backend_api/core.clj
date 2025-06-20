@@ -133,6 +133,10 @@
 ;;; ----------------------------------------------------------------
 
 (defroutes app-routes
+  (GET "/health" []
+    {:status 200
+     :headers {"Content-Type" "text/plain"}
+     :body "OK"})
   (context "/api" []
     (GET "/horarios" [] (get-all-horarios-handler))
     (POST "/horarios/editar" request (update-horarios-handler request))
