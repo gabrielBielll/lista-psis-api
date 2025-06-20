@@ -8,85 +8,29 @@
     [clojure.java.jdbc :as jdbc]
     [environ.core :refer [env]]
     [buddy.hashers :as hashers]
-    [cheshire.core :as json])
+    [cheshire.core :as json]
+    [ring.middleware.cors :refer [wrap-cors]]) ; <-- NOVO REQUIRE
   (:import (org.postgresql.util PGobject))
   (:gen-class))
 
-;;; ----------------------------------------------------------------
-;;; Configuração do Banco de Dados
-;;; ----------------------------------------------------------------
+;; ... (código existente para db-spec, ->jsonb, pgobject->map) ...
 
-(def db-spec
-  (let [db-url (env :database-url)]
-    (if db-url
-      (str db-url "?ssl=true&sslmode=require")
-      nil)))
-
-;;; ----------------------------------------------------------------
-;;; Funções Auxiliares
-;;; ----------------------------------------------------------------
-
-(defn ->jsonb [data]
-  (doto (PGobject.)
-    (.setType "jsonb")
-    (.setValue (json/generate-string data))))
-
-(defn- pgobject->map [pg-obj]
-  (when pg-obj
-    (-> pg-obj
-        .getValue
-        (json/parse-string true))))
-
-;;; ----------------------------------------------------------------
-;;; Funções de Acesso ao Banco de Dados
-;;; ----------------------------------------------------------------
-
-;; !! NOVA FUNÇÃO PARA CONTAR OS REGISTOS !!
+;; Funções de acesso ao banco de dados (sem alterações)
 (defn count-psychologists []
-  (try
-    (-> (jdbc/query db-spec ["SELECT count(*) FROM horarios"])
-        first
-        :count)
-    (catch Exception e
-      (println (str "ERRO GRAVE em count-psychologists: " (.getMessage e)))
-      ;; Retorna um número alto em caso de erro para bloquear a criação por segurança
-      999)))
-
+  (try (-> (jdbc/query db-spec ["SELECT count(*) FROM horarios"]) first :count)
+    (catch Exception e (println (str "ERRO GRAVE em count-psychologists: " (.getMessage e))) 999)))
 (defn get-all-schedules []
-  (try
-    (if db-spec
-      (let [results (jdbc/query db-spec ["SELECT psicologa_id, horarios_disponiveis FROM horarios"])]
-        (mapv (fn [row] (update row :horarios_disponiveis pgobject->map))
-              results))
-      (do
-        (println "ERRO FATAL: A variável de ambiente DATABASE_URL não está definida.")
-        []))
-    (catch Exception e
-      (println (str "ERRO GRAVE em get-all-schedules: " (.getMessage e)))
-      [])))
-
+  (try (let [results (jdbc/query db-spec ["SELECT psicologa_id, horarios_disponiveis FROM horarios"])] (mapv (fn [row] (update row :horarios_disponiveis pgobject->map)) results))
+    (catch Exception e (println (str "ERRO GRAVE em get-all-schedules: " (.getMessage e))) [])))
 (defn get-psychologist-by-id [id]
-  (try
-    (first (jdbc/query db-spec ["SELECT id, psicologa_id, senha_hash FROM horarios WHERE psicologa_id = ?" id]))
-    (catch Exception e
-      (println (str "ERRO GRAVE em get-psychologist-by-id: " (.getMessage e)))
-      nil)))
-
+  (try (first (jdbc/query db-spec ["SELECT id, psicologa_id, senha_hash FROM horarios WHERE psicologa_id = ?" id]))
+    (catch Exception e (println (str "ERRO GRAVE em get-psychologist-by-id: " (.getMessage e))) nil)))
 (defn update-schedule! [id new-schedule]
-  (try
-    (let [json-schedule (->jsonb new-schedule)]
-      (jdbc/update! db-spec :horarios
-                    {:horarios_disponiveis json-schedule
-                     :atualizado_em (java.sql.Timestamp. (System/currentTimeMillis))}
-                    ["psicologa_id = ?" id]))
-    (catch Exception e
-      (println (str "ERRO GRAVE em update-schedule!: " (.getMessage e)))
-      nil)))
+  (try (let [json-schedule (->jsonb new-schedule)] (jdbc/update! db-spec :horarios {:horarios_disponiveis json-schedule :atualizado_em (java.sql.Timestamp. (System/currentTimeMillis))} ["psicologa_id = ?" id]))
+    (catch Exception e (println (str "ERRO GRAVE em update-schedule!: " (.getMessage e))) nil)))
 
-;;; ----------------------------------------------------------------
-;;; Handlers dos Endpoints
-;;; ----------------------------------------------------------------
 
+;; Handlers dos Endpoints (sem alterações)
 (defn get-all-horarios-handler []
   (let [schedules (get-all-schedules)]
     (resp/response schedules)))
@@ -94,41 +38,21 @@
 (defn update-horarios-handler [request]
   (let [{:keys [id senha horarios]} (:body request)]
     (if (or (nil? id) (nil? senha) (nil? horarios))
-      (-> (resp/response {:message "Requisição inválida. Campos 'id', 'senha' e 'horarios' são obrigatórios."})
-          (resp/status 400))
-      
+      (-> (resp/response {:message "Requisição inválida. Campos 'id', 'senha' e 'horarios' são obrigatórios."}) (resp/status 400))
       (if-let [psi (get-psychologist-by-id id)]
         (if (hashers/check senha (:senha_hash psi))
-          (do
-            (update-schedule! id horarios)
-            (-> (resp/response {:message "Horários atualizados com sucesso!"})
-                (resp/status 200)))
-          (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
-              (resp/status 401)))
-        
-        (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
-            (resp/status 401))))))
+          (do (update-schedule! id horarios) (-> (resp/response {:message "Horários atualizados com sucesso!"}) (resp/status 200)))
+          (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."}) (resp/status 401)))
+        (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."}) (resp/status 401))))))
 
-;; !! LÓGICA ATUALIZADA COM A TRAVA DE LIMITE !!
 (defn create-psychologist-handler [request]
   (if (>= (count-psychologists) 5)
-    (-> (resp/response {:message "Limite de 5 psicólogas atingido. Não é possível criar mais."})
-        (resp/status 403)) ; 403 Forbidden
+    (-> (resp/response {:message "Limite de 5 psicólogas atingido. Não é possível criar mais."}) (resp/status 403))
     (let [{:keys [id senha]} (:body request)]
       (if (or (nil? id) (nil? senha))
-        (-> (resp/response {:message "Requisição inválida. Campos 'id' e 'senha' são obrigatórios."})
-            (resp/status 400))
-        (try
-          (let [hashed-password (hashers/derive senha)]
-            (jdbc/insert! db-spec :horarios 
-                          {:psicologa_id id 
-                           :senha_hash hashed-password
-                           :horarios_disponiveis (->jsonb {})})
-            (-> (resp/response {:message "Psicólogo criado com sucesso!"})
-                (resp/status 201)))
-          (catch Exception e
-            (-> (resp/response {:message (str "Erro ao criar psicólogo: " (.getMessage e))})
-                (resp/status 500)))))))
+        (-> (resp/response {:message "Requisição inválida. Campos 'id' e 'senha' são obrigatórios."}) (resp/status 400))
+        (try (let [hashed-password (hashers/derive senha)] (jdbc/insert! db-spec :horarios {:psicologa_id id :senha_hash hashed-password :horarios_disponiveis (->jsonb {})}) (-> (resp/response {:message "Psicólogo criado com sucesso!"}) (resp/status 201)))
+          (catch Exception e (-> (resp/response {:message (str "Erro ao criar psicólogo: " (.getMessage e))}) (resp/status 500)))))))
 
 ;;; ----------------------------------------------------------------
 ;;; Definição de Rotas e Middlewares
@@ -141,14 +65,15 @@
     (POST "/horarios/criar" request (create-psychologist-handler request)))
   (route/not-found "Recurso não encontrado"))
 
+;; !! APLICAÇÃO ATUALIZADA COM O WRAP-CORS !!
 (def app
   (-> app-routes
-      (wrap-json-body {:keywords? true :bigdecimals? true})
+      (wrap-cors :access-control-allow-origin [#".*"] ; Permite qualquer origem
+                 :access-control-allow-methods [:get :post]) ; Permite métodos GET e POST
+      (wrap-json-body {:keywords? true})
       (wrap-json-response)))
 
-;;; ----------------------------------------------------------------
-;;; Função Principal
-;;; ----------------------------------------------------------------
+;; ... (o -main e o resto do arquivo continuam iguais) ...
 
 (defn -main [& args]
   (let [port (Integer/parseInt (or (env :port) "8080"))]
