@@ -14,7 +14,7 @@
   (:gen-class))
 
 ;;; ----------------------------------------------------------------
-;;; Configuração do Banco de Dados - ORDEM CORRIGIDA
+;;; Configuração do Banco de Dados
 ;;; ----------------------------------------------------------------
 
 (def db-spec
@@ -144,7 +144,7 @@
       (wrap-cors :access-control-allow-origin [#".*"]
                  :access-control-allow-methods [:get :post])
       (wrap-json-body {:keywords? true})
-      (wrap-json-response)))
+      (wrap-json-response))) ; <-- O PARÊNTESE EM FALTA ESTAVA AQUI
 
 ;;; ----------------------------------------------------------------
 ;;; Função Principal
