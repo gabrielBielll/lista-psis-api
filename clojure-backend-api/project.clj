@@ -11,8 +11,9 @@
                  [org.clojure/java.jdbc "0.7.12"]
                  [org.postgresql/postgresql "42.5.0"]
                  [environ "1.2.0"]
-                 [buddy/buddy-hashers "1.8.1"] ; Nova biblioteca de senhas
-                 [cheshire "5.11.0"]]
+                 [buddy/buddy-hashers "1.8.1"]
+                 [cheshire "5.11.0"]
+                 [ring-cors "0.1.13"]] ; <-- NOVA DEPENDÊNCIA
 
   :main ^:skip-aot clojure-backend-api.core
   :target-path "target/%s"
