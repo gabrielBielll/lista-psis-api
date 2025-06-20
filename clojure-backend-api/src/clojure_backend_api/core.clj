@@ -126,7 +126,7 @@
                 (resp/status 201)))
           (catch Exception e
             (-> (resp/response {:message (str "Erro ao criar psicólogo: " (.getMessage e))})
-                (resp/status 500)))))))
+                (resp/status 500))))))))
 
 ;;; ----------------------------------------------------------------
 ;;; Definição de Rotas e Middlewares
