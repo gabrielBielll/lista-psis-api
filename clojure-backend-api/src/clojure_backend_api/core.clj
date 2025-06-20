@@ -87,8 +87,7 @@
           (resp/status 400))
       
       (if-let [psi (get-psychologist-by-id id)]
-        ;; !! MUDANÇA PARA DEBUG !!
-        ;; A verificação de senha foi temporariamente desativada para isolar o erro.
+        ;; !! A verificação da senha ainda está desativada para teste !!
         (if true ; (password/check senha (:senha_hash psi))
           (do
             (update-schedule! id horarios)
@@ -107,7 +106,9 @@
 (defroutes app-routes
   (context "/api" []
     (GET "/horarios" [] (get-all-horarios-handler))
-    (POST "/horarios/editar" request (update-horarios-handler)))
+    ;; !! LINHA CORRIGIDA !!
+    ;; A 'request' agora é passada para a função handler.
+    (POST "/horarios/editar" request (update-horarios-handler request)))
   (route/not-found "Recurso não encontrado"))
 
 (def app
