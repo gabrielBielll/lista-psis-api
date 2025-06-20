@@ -20,8 +20,11 @@
 (def db-spec
   (let [db-url (env :database-url)]
     (if db-url
+      ;; Para o Render, a conexão SSL é necessária
       (str db-url "?ssl=true&sslmode=require")
-      nil)))
+      (do
+        (println "AVISO: DATABASE_URL não definida. O banco de dados não funcionará.")
+        nil))))
 
 ;;; ----------------------------------------------------------------
 ;;; Funções Auxiliares
@@ -95,7 +98,7 @@
     (if (or (nil? id) (nil? senha) (nil? horarios))
       (-> (resp/response {:message "Requisição inválida. Campos 'id', 'senha' e 'horarios' são obrigatórios."})
           (resp/status 400))
-      
+
       (if-let [psi (get-psychologist-by-id id)]
         (if (hashers/check senha (:senha_hash psi))
           (do
@@ -104,7 +107,7 @@
                 (resp/status 200)))
           (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
               (resp/status 401)))
-        
+
         (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
             (resp/status 401))))))
 
@@ -118,8 +121,8 @@
             (resp/status 400))
         (try
           (let [hashed-password (hashers/derive senha)]
-            (jdbc/insert! db-spec :horarios 
-                          {:psicologa_id id 
+            (jdbc/insert! db-spec :horarios
+                          {:psicologa_id id
                            :senha_hash hashed-password
                            :horarios_disponiveis (->jsonb {})})
             (-> (resp/response {:message "Psicólogo criado com sucesso!"})
@@ -148,16 +151,18 @@
       (wrap-cors :access-control-allow-origin [#".*"]
                  :access-control-allow-methods [:get :post])
       (wrap-json-body {:keywords? true})
-      (wrap-json-response))) ; <-- O PARÊNTESE EM FALTA ESTAVA AQUI
+      (wrap-json-response)))
 
 ;;; ----------------------------------------------------------------
 ;;; Função Principal
 ;;; ----------------------------------------------------------------
 
 (defn -main [& args]
-  (let [port (Integer/parseInt (or (env :port) "8080"))]
-    (jetty/run-jetty app {:port port :join? false})
-    (println (str "Servidor rodando na porta " port))))
+  ;; Lê a porta da variável de ambiente PORT (fornecida pelo Render)
+  ;; ou usa 8080 como padrão para desenvolvimento local.
+  (let [port (Integer/parseInt (or (System/getenv "PORT") "8080"))]
+    (println (str "Servidor iniciando na porta " port))
+    (jetty/run-jetty app {:port port :join? false})))
 
 (defn init [] (println "Iniciando servidor..."))
 (defn destroy [] (println "Parando servidor..."))
