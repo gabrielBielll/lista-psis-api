@@ -7,7 +7,7 @@
     [ring.util.response :as resp]
     [clojure.java.jdbc :as jdbc]
     [environ.core :refer [env]]
-    [buddy.hashers :as hashers] ; Nova biblioteca de senhas
+    [buddy.hashers :as hashers]
     [cheshire.core :as json])
   (:import (org.postgresql.util PGobject))
   (:gen-class))
@@ -40,6 +40,17 @@
 ;;; ----------------------------------------------------------------
 ;;; Funções de Acesso ao Banco de Dados
 ;;; ----------------------------------------------------------------
+
+;; !! NOVA FUNÇÃO PARA CONTAR OS REGISTOS !!
+(defn count-psychologists []
+  (try
+    (-> (jdbc/query db-spec ["SELECT count(*) FROM horarios"])
+        first
+        :count)
+    (catch Exception e
+      (println (str "ERRO GRAVE em count-psychologists: " (.getMessage e)))
+      ;; Retorna um número alto em caso de erro para bloquear a criação por segurança
+      999)))
 
 (defn get-all-schedules []
   (try
@@ -98,23 +109,26 @@
         (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
             (resp/status 401))))))
 
-;; Rota para criar um novo psicólogo e gerar o hash da senha
+;; !! LÓGICA ATUALIZADA COM A TRAVA DE LIMITE !!
 (defn create-psychologist-handler [request]
-  (let [{:keys [id senha]} (:body request)]
-    (if (or (nil? id) (nil? senha))
-      (-> (resp/response {:message "Requisição inválida. Campos 'id' e 'senha' são obrigatórios."})
-          (resp/status 400))
-      (try
-        (let [hashed-password (hashers/derive senha)]
-          (jdbc/insert! db-spec :horarios 
-                        {:psicologa_id id 
-                         :senha_hash hashed-password
-                         :horarios_disponiveis (->jsonb {})})
-          (-> (resp/response {:message "Psicólogo criado com sucesso!"})
-              (resp/status 201)))
-        (catch Exception e
-          (-> (resp/response {:message (str "Erro ao criar psicólogo: " (.getMessage e))})
-              (resp/status 500)))))))
+  (if (>= (count-psychologists) 5)
+    (-> (resp/response {:message "Limite de 5 psicólogas atingido. Não é possível criar mais."})
+        (resp/status 403)) ; 403 Forbidden
+    (let [{:keys [id senha]} (:body request)]
+      (if (or (nil? id) (nil? senha))
+        (-> (resp/response {:message "Requisição inválida. Campos 'id' e 'senha' são obrigatórios."})
+            (resp/status 400))
+        (try
+          (let [hashed-password (hashers/derive senha)]
+            (jdbc/insert! db-spec :horarios 
+                          {:psicologa_id id 
+                           :senha_hash hashed-password
+                           :horarios_disponiveis (->jsonb {})})
+            (-> (resp/response {:message "Psicólogo criado com sucesso!"})
+                (resp/status 201)))
+          (catch Exception e
+            (-> (resp/response {:message (str "Erro ao criar psicólogo: " (.getMessage e))})
+                (resp/status 500)))))))
 
 ;;; ----------------------------------------------------------------
 ;;; Definição de Rotas e Middlewares
@@ -124,7 +138,7 @@
   (context "/api" []
     (GET "/horarios" [] (get-all-horarios-handler))
     (POST "/horarios/editar" request (update-horarios-handler request))
-    (POST "/horarios/criar" request (create-psychologist-handler request))) ; Nova rota
+    (POST "/horarios/criar" request (create-psychologist-handler request)))
   (route/not-found "Recurso não encontrado"))
 
 (def app
