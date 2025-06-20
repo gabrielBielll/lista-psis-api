@@ -7,7 +7,7 @@
     [ring.util.response :as resp]
     [clojure.java.jdbc :as jdbc]
     [environ.core :refer [env]]
-    [crypto.password.bcrypt :as password]
+    [buddy.hashers :as hashers] ; Nova biblioteca de senhas
     [cheshire.core :as json])
   (:import (org.postgresql.util PGobject))
   (:gen-class))
@@ -87,22 +87,34 @@
           (resp/status 400))
       
       (if-let [psi (get-psychologist-by-id id)]
-        (let [stored-hash (:senha_hash psi)]
-          
-          ;; !! LINHAS DE DEBUG ADICIONADAS !!
-          (println (str "DEBUG: Tipo da senha_hash do banco: " (type stored-hash)))
-          (println (str "DEBUG: Valor da senha_hash do banco: " stored-hash))
-
-          (if (password/check senha stored-hash)
-            (do
-              (update-schedule! id horarios)
-              (-> (resp/response {:message "Horários atualizados com sucesso!"})
-                  (resp/status 200)))
-            (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
-                (resp/status 401))))
+        (if (hashers/check senha (:senha_hash psi))
+          (do
+            (update-schedule! id horarios)
+            (-> (resp/response {:message "Horários atualizados com sucesso!"})
+                (resp/status 200)))
+          (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
+              (resp/status 401)))
         
         (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
             (resp/status 401))))))
+
+;; Rota para criar um novo psicólogo e gerar o hash da senha
+(defn create-psychologist-handler [request]
+  (let [{:keys [id senha]} (:body request)]
+    (if (or (nil? id) (nil? senha))
+      (-> (resp/response {:message "Requisição inválida. Campos 'id' e 'senha' são obrigatórios."})
+          (resp/status 400))
+      (try
+        (let [hashed-password (hashers/derive senha)]
+          (jdbc/insert! db-spec :horarios 
+                        {:psicologa_id id 
+                         :senha_hash hashed-password
+                         :horarios_disponiveis (->jsonb {})})
+          (-> (resp/response {:message "Psicólogo criado com sucesso!"})
+              (resp/status 201)))
+        (catch Exception e
+          (-> (resp/response {:message (str "Erro ao criar psicólogo: " (.getMessage e))})
+              (resp/status 500)))))))
 
 ;;; ----------------------------------------------------------------
 ;;; Definição de Rotas e Middlewares
@@ -111,7 +123,8 @@
 (defroutes app-routes
   (context "/api" []
     (GET "/horarios" [] (get-all-horarios-handler))
-    (POST "/horarios/editar" request (update-horarios-handler request)))
+    (POST "/horarios/editar" request (update-horarios-handler request))
+    (POST "/horarios/criar" request (create-psychologist-handler request))) ; Nova rota
   (route/not-found "Recurso não encontrado"))
 
 (def app
