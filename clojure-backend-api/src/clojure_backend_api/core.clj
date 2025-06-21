@@ -10,36 +10,33 @@
     [buddy.hashers :as hashers]
     [cheshire.core :as json]
     [ring.middleware.cors :refer [wrap-cors]]
-    ;; --- REQUIRES DO PROMETHEUS ---
-    [iapetus.core :as prometheus]
-    [iapetus.handler :as prometheus-handler]
-    [iapetus.collector.ring :as ring-metrics])
+    ;; --- REQUIRES DA NOVA BIBLIOTECA DE MÉTRICAS ---
+    [metrics.ring.instrument :refer [instrument]]
+    [metrics.reporters.prometheus :as prometheus-reporter])
   (:import (org.postgresql.util PGobject))
   (:gen-class))
 
-;;; ----------------------------------------------------------------
-;;; Registro de Métricas Prometheus
-;;; ----------------------------------------------------------------
-;; Irá registrar métricas padrão da JVM (memória, GC, etc.) e as métricas do Ring.
-(defonce registry (prometheus/collector-registry))
 
 ;;; ----------------------------------------------------------------
-;;; Configuração do Banco de Dados
+;;; Configuração do Reporter do Prometheus
 ;;; ----------------------------------------------------------------
+;; Cria e inicia um reporter que irá coletar as métricas
+(defonce prom-reporter (prometheus-reporter/reporter))
+(prometheus-reporter/start prom-reporter)
 
+
+;;; ----------------------------------------------------------------
+;;; Configuração do Banco de Dados (sem alteração)
+;;; ----------------------------------------------------------------
 (def db-spec
   (let [db-url (env :database-url)]
     (if db-url
-      ;; Para o Render, a conexão SSL é necessária
       (str db-url "?ssl=true&sslmode=require")
       (do
         (println "AVISO: DATABASE_URL não definida. O banco de dados não funcionará.")
         nil))))
 
-;;; ----------------------------------------------------------------
-;;; Funções Auxiliares (sem alteração)
-;;; ----------------------------------------------------------------
-
+;;; ... (o restante das suas funções de BD e auxiliares permanecem iguais) ...
 (defn ->jsonb [data]
   (doto (PGobject.)
     (.setType "jsonb")
@@ -51,9 +48,6 @@
         .getValue
         (json/parse-string true))))
 
-;;; ----------------------------------------------------------------
-;;; Funções de Acesso ao Banco de Dados (sem alteração)
-;;; ----------------------------------------------------------------
 (defn count-psychologists []
   (try
     (-> (jdbc/query db-spec ["SELECT count(*) FROM horarios"])
@@ -94,10 +88,6 @@
       (println (str "ERRO GRAVE em update-schedule!: " (.getMessage e)))
       nil)))
 
-
-;;; ----------------------------------------------------------------
-;;; Handlers dos Endpoints (sem alteração)
-;;; ----------------------------------------------------------------
 (defn get-all-horarios-handler []
   (let [schedules (get-all-schedules)]
     (resp/response schedules)))
@@ -107,7 +97,6 @@
     (if (or (nil? id) (nil? senha) (nil? horarios))
       (-> (resp/response {:message "Requisição inválida. Campos 'id', 'senha' e 'horarios' são obrigatórios."})
           (resp/status 400))
-
       (if-let [psi (get-psychologist-by-id id)]
         (if (hashers/check senha (:senha_hash psi))
           (do
@@ -116,7 +105,6 @@
                 (resp/status 200)))
           (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
               (resp/status 401)))
-
         (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
             (resp/status 401))))))
 
@@ -140,6 +128,7 @@
             (-> (resp/response {:message (str "Erro ao criar psicólogo: " (.getMessage e))})
                 (resp/status 500))))))))
 
+
 ;;; ----------------------------------------------------------------
 ;;; Definição de Rotas e Middlewares
 ;;; ----------------------------------------------------------------
@@ -151,7 +140,9 @@
      :body "OK"})
      
   ;; Rota para o Prometheus fazer o 'scrape' das métricas
-  (GET "/metrics" [] (prometheus-handler/metrics-handler registry))
+  (GET "/metrics" [] {:status 200
+                      :headers {"Content-Type" "text/plain"}
+                      :body (prometheus-reporter/report-str prom-reporter)})
 
   (context "/api" []
     (GET "/horarios" [] (get-all-horarios-handler))
@@ -165,17 +156,15 @@
                  :access-control-allow-methods [:get :post])
       (wrap-json-body {:keywords? true})
       (wrap-json-response)
-      ;; --- Middleware do Prometheus ---
-      ;; Este deve ser um dos últimos wrappers para medir o tempo total de resposta.
-      (ring-metrics/wrap-instrument-handler registry)))
+      ;; Adiciona o middleware de instrumentação da nova biblioteca
+      (instrument)))
+
 
 ;;; ----------------------------------------------------------------
 ;;; Função Principal (sem alteração)
 ;;; ----------------------------------------------------------------
 
 (defn -main [& args]
-  ;; Lê a porta da variável de ambiente PORT (fornecida pelo Render)
-  ;; ou usa 8080 como padrão para desenvolvimento local.
   (let [port (Integer/parseInt (or (System/getenv "PORT") "8080"))]
     (println (str "Servidor iniciando na porta " port))
     (jetty/run-jetty app {:port port :join? false})))
