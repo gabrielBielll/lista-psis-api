@@ -18,8 +18,13 @@
                  [buddy/buddy-hashers "1.8.1"]
                  [cheshire "5.11.0"]
                  [ring-cors "0.1.13"]
+                 ;; Métricas e Prometheus
                  [metrics-clojure "2.10.0"]
-                 [metrics-clojure/metrics-clojure-prometheus "2.10.0"]]
+                 [metrics-clojure/metrics-clojure-ring "2.10.0"]
+                 [io.prometheus/simpleclient "0.16.0"]
+                 [io.prometheus/simpleclient_hotspot "0.16.0"]
+                 [io.prometheus/simpleclient_servlet "0.16.0"]
+                 [io.prometheus/simpleclient_common "0.16.0"]]
 
   :main ^:skip-aot clojure-backend-api.core
   :target-path "target/%s"
