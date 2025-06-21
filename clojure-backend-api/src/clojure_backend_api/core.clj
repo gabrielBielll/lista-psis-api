@@ -9,9 +9,19 @@
     [environ.core :refer [env]]
     [buddy.hashers :as hashers]
     [cheshire.core :as json]
-    [ring.middleware.cors :refer [wrap-cors]])
+    [ring.middleware.cors :refer [wrap-cors]]
+    ;; --- REQUIRES DO PROMETHEUS ---
+    [iapetus.core :as prometheus]
+    [iapetus.handler :as prometheus-handler]
+    [iapetus.collector.ring :as ring-metrics])
   (:import (org.postgresql.util PGobject))
   (:gen-class))
+
+;;; ----------------------------------------------------------------
+;;; Registro de Métricas Prometheus
+;;; ----------------------------------------------------------------
+;; Irá registrar métricas padrão da JVM (memória, GC, etc.) e as métricas do Ring.
+(defonce registry (prometheus/collector-registry))
 
 ;;; ----------------------------------------------------------------
 ;;; Configuração do Banco de Dados
@@ -27,7 +37,7 @@
         nil))))
 
 ;;; ----------------------------------------------------------------
-;;; Funções Auxiliares
+;;; Funções Auxiliares (sem alteração)
 ;;; ----------------------------------------------------------------
 
 (defn ->jsonb [data]
@@ -42,9 +52,8 @@
         (json/parse-string true))))
 
 ;;; ----------------------------------------------------------------
-;;; Funções de Acesso ao Banco de Dados
+;;; Funções de Acesso ao Banco de Dados (sem alteração)
 ;;; ----------------------------------------------------------------
-
 (defn count-psychologists []
   (try
     (-> (jdbc/query db-spec ["SELECT count(*) FROM horarios"])
@@ -85,10 +94,10 @@
       (println (str "ERRO GRAVE em update-schedule!: " (.getMessage e)))
       nil)))
 
-;;; ----------------------------------------------------------------
-;;; Handlers dos Endpoints
-;;; ----------------------------------------------------------------
 
+;;; ----------------------------------------------------------------
+;;; Handlers dos Endpoints (sem alteração)
+;;; ----------------------------------------------------------------
 (defn get-all-horarios-handler []
   (let [schedules (get-all-schedules)]
     (resp/response schedules)))
@@ -140,6 +149,10 @@
     {:status 200
      :headers {"Content-Type" "text/plain"}
      :body "OK"})
+     
+  ;; Rota para o Prometheus fazer o 'scrape' das métricas
+  (GET "/metrics" [] (prometheus-handler/metrics-handler registry))
+
   (context "/api" []
     (GET "/horarios" [] (get-all-horarios-handler))
     (POST "/horarios/editar" request (update-horarios-handler request))
@@ -151,10 +164,13 @@
       (wrap-cors :access-control-allow-origin [#".*"]
                  :access-control-allow-methods [:get :post])
       (wrap-json-body {:keywords? true})
-      (wrap-json-response)))
+      (wrap-json-response)
+      ;; --- Middleware do Prometheus ---
+      ;; Este deve ser um dos últimos wrappers para medir o tempo total de resposta.
+      (ring-metrics/wrap-instrument-handler registry)))
 
 ;;; ----------------------------------------------------------------
-;;; Função Principal
+;;; Função Principal (sem alteração)
 ;;; ----------------------------------------------------------------
 
 (defn -main [& args]
