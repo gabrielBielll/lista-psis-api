@@ -3,6 +3,10 @@
   :url "http://example.com/FIXME"
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
             :url "https://www.eclipse.org/legal/epl-2.0/"}
+
+  ;; ADICIONA O REPOSITÓRIO CLOJARS EXPLÍCITAMENTE
+  :repositories [["clojars" "https://repo.clojars.org/"]]
+
   :dependencies [[org.clojure/clojure "1.11.1"]
                  [ring/ring-core "1.9.6"]
                  [ring/ring-jetty-adapter "1.9.6"]
@@ -14,9 +18,8 @@
                  [buddy/buddy-hashers "1.8.1"]
                  [cheshire "5.11.0"]
                  [ring-cors "0.1.13"]
-                 ;; --- NOVA BIBLIOTECA DE MÉTRICAS (CORRIGIDO) ---
                  [metrics-clojure "2.10.0"]
-                 [metrics-clojure/metrics-clojure-prometheus "2.10.0"]] ; <-- CORRIGIDO AQUI
+                 [metrics-clojure/metrics-clojure-prometheus "2.10.0"]]
 
   :main ^:skip-aot clojure-backend-api.core
   :target-path "target/%s"
