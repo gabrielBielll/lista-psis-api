@@ -14,9 +14,9 @@
                  [buddy/buddy-hashers "1.8.1"]
                  [cheshire "5.11.0"]
                  [ring-cors "0.1.13"]
-                 ;; --- Dependências do Prometheus (CORRIGIDO) ---
-                 [io.prometheus/simpleclient_hotspot "0.11.0"]
-                 [io.github.clj-prometheus/iapetus "0.1.12"]] ; <-- CORRIGIDO AQUI (NOME VERIFICADO)
+                 ;; --- NOVA BIBLIOTECA DE MÉTRICAS ---
+                 [metrics-clojure "2.10.0"]
+                 [metrics-clojure-prometheus "2.10.0"]]
 
   :main ^:skip-aot clojure-backend-api.core
   :target-path "target/%s"
