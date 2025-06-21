@@ -18,9 +18,9 @@
                  [buddy/buddy-hashers "1.8.1"]
                  [cheshire "5.11.0"]
                  [ring-cors "0.1.13"]
-                 ;; Métricas e Prometheus
+                 ;; Métricas - NOMES CORRETOS
                  [metrics-clojure "2.10.0"]
-                 [metrics-clojure/metrics-clojure-ring "2.10.0"]
+                 [metrics-clojure-ring "2.10.0"]  ; ← CORREÇÃO AQUI
                  [io.prometheus/simpleclient "0.16.0"]
                  [io.prometheus/simpleclient_hotspot "0.16.0"]
                  [io.prometheus/simpleclient_servlet "0.16.0"]
