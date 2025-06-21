@@ -10,10 +10,14 @@
     [buddy.hashers :as hashers]
     [cheshire.core :as json]
     [ring.middleware.cors :refer [wrap-cors]]
-    [metrics.ring.instrument :refer [instrument]]
-    [metrics.core :as metrics])
+    ;; SIMPLIFICADO: Apenas o básico que funciona
+    [metrics.ring.instrument :refer [instrument]])
   (:import (org.postgresql.util PGobject))
   (:gen-class))
+
+;; Contador simples para métricas
+(defonce request-counter (atom 0))
+(defonce start-time (System/currentTimeMillis))
 
 ;;; ----------------------------------------------------------------
 ;;; Configuração do Banco de Dados
@@ -84,13 +88,15 @@
       nil)))
 
 ;;; ----------------------------------------------------------------
-;;; Handlers
+;;; Handlers com contadores simples
 ;;; ----------------------------------------------------------------
 (defn get-all-horarios-handler []
+  (swap! request-counter inc)
   (let [schedules (get-all-schedules)]
     (resp/response schedules)))
 
 (defn update-horarios-handler [request]
+  (swap! request-counter inc)
   (let [{:keys [id senha horarios]} (:body request)]
     (if (or (nil? id) (nil? senha) (nil? horarios))
       (-> (resp/response {:message "Requisição inválida. Campos 'id', 'senha' e 'horarios' são obrigatórios."})
@@ -107,6 +113,7 @@
             (resp/status 401))))))
 
 (defn create-psychologist-handler [request]
+  (swap! request-counter inc)
   (if (>= (count-psychologists) 5)
     (-> (resp/response {:message "Limite de 5 psicólogas atingido. Não é possível criar mais."})
         (resp/status 403))
@@ -127,48 +134,34 @@
                 (resp/status 500))))))))
 
 ;;; ----------------------------------------------------------------
-;;; Métricas para Prometheus
+;;; Métricas Super Simples para Prometheus
 ;;; ----------------------------------------------------------------
-(defn convert-to-prometheus-format []
-  (let [registry (metrics/default-registry)
-        metrics-data (metrics/serialize registry)]
+(defn simple-prometheus-metrics []
+  (let [current-time (System/currentTimeMillis)
+        uptime-seconds (/ (- current-time start-time) 1000)
+        request-count @request-counter
+        psychologist-count (count-psychologists)]
     (str 
-     ;; Requests por método
-     "# HELP http_requests_total Total HTTP requests by method\n"
+     "# HELP http_requests_total Total number of HTTP requests\n"
      "# TYPE http_requests_total counter\n"
-     (when-let [get-rate (get-in metrics-data ["ring.requests.rate.GET" "rates" "total"])]
-       (str "http_requests_total{method=\"GET\"} " (int get-rate) "\n"))
-     (when-let [post-rate (get-in metrics-data ["ring.requests.rate.POST" "rates" "total"])]
-       (str "http_requests_total{method=\"POST\"} " (int post-rate) "\n"))
+     "http_requests_total " request-count "\n\n"
      
-     ;; Response status
-     "# HELP http_responses_total Total HTTP responses by status\n"
-     "# TYPE http_responses_total counter\n"
-     (when-let [rate-2xx (get-in metrics-data ["ring.responses.rate.2xx" "rates" "total"])]
-       (str "http_responses_total{status=\"2xx\"} " (int rate-2xx) "\n"))
-     (when-let [rate-4xx (get-in metrics-data ["ring.responses.rate.4xx" "rates" "total"])]
-       (str "http_responses_total{status=\"4xx\"} " (int rate-4xx) "\n"))
-     
-     ;; Tempo de resposta
-     "# HELP http_request_duration_seconds Request duration in seconds\n"
-     "# TYPE http_request_duration_seconds summary\n"
-     (when-let [duration (get-in metrics-data ["ring.handling-time.GET" "mean"])]
-       (str "http_request_duration_seconds{method=\"GET\",quantile=\"mean\"} " (format "%.6f" (/ duration 1000000)) "\n"))
-     
-     ;; Informações da aplicação
-     "# HELP app_info Application information\n"
-     "# TYPE app_info gauge\n"
-     "app_info{version=\"1.0\",service=\"clojure-psis-api\"} 1\n"
-     
-     ;; Contador de psicólogos
      "# HELP psychologists_total Number of psychologists in database\n"
      "# TYPE psychologists_total gauge\n"
-     "psychologists_total " (count-psychologists) "\n")))
+     "psychologists_total " psychologist-count "\n\n"
+     
+     "# HELP app_uptime_seconds Application uptime in seconds\n"
+     "# TYPE app_uptime_seconds gauge\n"
+     "app_uptime_seconds " (int uptime-seconds) "\n\n"
+     
+     "# HELP app_info Application information\n"
+     "# TYPE app_info gauge\n"
+     "app_info{version=\"1.0\",service=\"clojure-psis-api\",environment=\"production\"} 1\n")))
 
 (defn prometheus-metrics-handler []
   {:status 200
    :headers {"Content-Type" "text/plain; charset=utf-8"}
-   :body (convert-to-prometheus-format)})
+   :body (simple-prometheus-metrics)})
 
 ;;; ----------------------------------------------------------------
 ;;; Rotas
@@ -179,14 +172,8 @@
      :headers {"Content-Type" "text/plain"}
      :body "OK"})
      
-  ;; Endpoint de métricas em formato Prometheus
+  ;; Endpoint de métricas SUPER SIMPLES
   (GET "/metrics" [] (prometheus-metrics-handler))
-  
-  ;; Endpoint de métricas em JSON para debug
-  (GET "/metrics-json" [] 
-    {:status 200
-     :headers {"Content-Type" "application/json"}
-     :body (json/generate-string (metrics/serialize (metrics/default-registry)))})
 
   (context "/api" []
     (GET "/horarios" [] (get-all-horarios-handler))
@@ -203,7 +190,7 @@
                  :access-control-allow-methods [:get :post])
       (wrap-json-body {:keywords? true})
       (wrap-json-response)
-      (instrument)))
+      (instrument)))  ; Mantém instrumentação básica
 
 ;;; ----------------------------------------------------------------
 ;;; Função Principal
