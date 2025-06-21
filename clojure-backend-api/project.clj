@@ -17,9 +17,11 @@
                  [buddy/buddy-hashers "1.8.1"]
                  [cheshire "5.11.0"]
                  [ring-cors "0.1.13"]
-                 ;; VOLTANDO para metrics-clojure que funciona
+                 ;; Apenas o básico do metrics-clojure
                  [metrics-clojure "2.10.0"]
-                 [metrics-clojure-ring "2.10.0"]]
+                 [metrics-clojure-ring "2.10.0"]
+                 ;; SLF4J simples para parar os warnings
+                 [org.slf4j/slf4j-simple "1.7.36"]]
 
   :main ^:skip-aot clojure-backend-api.core
   :target-path "target/%s"
