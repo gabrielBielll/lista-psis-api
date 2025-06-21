@@ -4,155 +4,40 @@
     [compojure.route :as route]
     [ring.adapter.jetty :as jetty]
     [ring.middleware.json :refer [wrap-json-response wrap-json-body]]
-    [ring.util.response :as resp]
-    [clojure.java.jdbc :as jdbc]
-    [environ.core :refer [env]]
-    [buddy.hashers :as hashers]
-    [cheshire.core :as json]
     [ring.middleware.cors :refer [wrap-cors]]
-    ;; VOLTANDO para metrics-clojure
     [metrics.ring.instrument :refer [instrument]]
-    [metrics.ring.expose :refer [expose-metrics-as-json]])
-  (:import (org.postgresql.util PGobject))
+    ;; SEUS NAMESPACES ORGANIZADOS
+    [clojure-backend-api.utils.metrics :as metrics]
+    [clojure-backend-api.handlers.horarios :as horarios])
   (:gen-class))
 
-;;; ----------------------------------------------------------------
-;;; Suas funções existentes (sem alteração)
-;;; ----------------------------------------------------------------
-(def db-spec
-  (let [db-url (env :database-url)]
-    (if db-url
-      (str db-url "?ssl=true&sslmode=require")
-      (do
-        (println "AVISO: DATABASE_URL não definida. O banco de dados não funcionará.")
-        nil))))
-
-(defn ->jsonb [data]
-  (doto (PGobject.)
-    (.setType "jsonb")
-    (.setValue (json/generate-string data))))
-
-(defn- pgobject->map [pg-obj]
-  (when pg-obj
-    (-> pg-obj
-        .getValue
-        (json/parse-string true))))
-
-(defn count-psychologists []
-  (try
-    (-> (jdbc/query db-spec ["SELECT count(*) FROM horarios"])
-        first
-        :count)
-    (catch Exception e
-      (println (str "ERRO GRAVE em count-psychologists: " (.getMessage e)))
-      999)))
-
-(defn get-all-schedules []
-  (try
-    (if db-spec
-      (let [results (jdbc/query db-spec ["SELECT psicologa_id, horarios_disponiveis FROM horarios"])]
-        (mapv (fn [row] (update row :horarios_disponiveis pgobject->map))
-              results))
-      (do
-        (println "ERRO FATAL: A variável de ambiente DATABASE_URL não está definida.")
-        []))
-    (catch Exception e
-      (println (str "ERRO GRAVE em get-all-schedules: " (.getMessage e)))
-      [])))
-
-(defn get-psychologist-by-id [id]
-  (try
-    (first (jdbc/query db-spec ["SELECT id, psicologa_id, senha_hash FROM horarios WHERE psicologa_id = ?" id]))
-    (catch Exception e
-      (println (str "ERRO GRAVE em get-psychologist-by-id: " (.getMessage e)))
-      nil)))
-
-(defn update-schedule! [id new-schedule]
-  (try
-    (let [json-schedule (->jsonb new-schedule)]
-      (jdbc/update! db-spec :horarios
-                    {:horarios_disponiveis json-schedule
-                     :atualizado_em (java.sql.Timestamp. (System/currentTimeMillis))}
-                    ["psicologa_id = ?" id]))
-    (catch Exception e
-      (println (str "ERRO GRAVE em update-schedule!: " (.getMessage e)))
-      nil)))
-
-(defn get-all-horarios-handler []
-  (let [schedules (get-all-schedules)]
-    (resp/response schedules)))
-
-(defn update-horarios-handler [request]
-  (let [{:keys [id senha horarios]} (:body request)]
-    (if (or (nil? id) (nil? senha) (nil? horarios))
-      (-> (resp/response {:message "Requisição inválida. Campos 'id', 'senha' e 'horarios' são obrigatórios."})
-          (resp/status 400))
-      (if-let [psi (get-psychologist-by-id id)]
-        (if (hashers/check senha (:senha_hash psi))
-          (do
-            (update-schedule! id horarios)
-            (-> (resp/response {:message "Horários atualizados com sucesso!"})
-                (resp/status 200)))
-          (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
-              (resp/status 401)))
-        (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
-            (resp/status 401))))))
-
-(defn create-psychologist-handler [request]
-  (if (>= (count-psychologists) 5)
-    (-> (resp/response {:message "Limite de 5 psicólogas atingido. Não é possível criar mais."})
-        (resp/status 403))
-    (let [{:keys [id senha]} (:body request)]
-      (if (or (nil? id) (nil? senha))
-        (-> (resp/response {:message "Requisição inválida. Campos 'id' e 'senha' são obrigatórios."})
-            (resp/status 400))
-        (try
-          (let [hashed-password (hashers/derive senha)]
-            (jdbc/insert! db-spec :horarios
-                          {:psicologa_id id
-                           :senha_hash hashed-password
-                           :horarios_disponiveis (->jsonb {})})
-            (-> (resp/response {:message "Psicólogo criado com sucesso!"})
-                (resp/status 201)))
-          (catch Exception e
-            (-> (resp/response {:message (str "Erro ao criar psicólogo: " (.getMessage e))})
-                (resp/status 500))))))))
-
-;;; ----------------------------------------------------------------
-;;; Rotas
-;;; ----------------------------------------------------------------
 (defroutes app-routes
   (GET "/health" []
     {:status 200
      :headers {"Content-Type" "text/plain"}
      :body "OK"})
+     
+  ;; USANDO OS HANDLERS DO NAMESPACE UTILS
+  (GET "/metrics" [] (metrics/prometheus-metrics-handler))
+  (GET "/metrics-json" [] (metrics/metrics-json-handler))
 
   (context "/api" []
-    (GET "/horarios" [] (get-all-horarios-handler))
-    (POST "/horarios/editar" request (update-horarios-handler request))
-    (POST "/horarios/criar" request (create-psychologist-handler request)))
+    (GET "/horarios" [] (horarios/get-all))
+    (POST "/horarios/editar" request (horarios/update request))
+    (POST "/horarios/criar" request (horarios/create request)))
   (route/not-found "Recurso não encontrado"))
 
-;;; ----------------------------------------------------------------
-;;; App com middlewares
-;;; ----------------------------------------------------------------
+;; App definition permanece igual
 (def app
   (-> app-routes
       (wrap-cors :access-control-allow-origin [#".*"]
                  :access-control-allow-methods [:get :post])
       (wrap-json-body {:keywords? true})
       (wrap-json-response)
-      ;; ADICIONANDO os middlewares de métricas
-      (expose-metrics-as-json "/metrics")  ; ← ENDPOINT /metrics
-      (instrument)))                       ; ← INSTRUMENTAÇÃO
+      (instrument)))
 
-;;; ----------------------------------------------------------------
-;;; Main
-;;; ----------------------------------------------------------------
+;; Main function permanece igual
 (defn -main [& args]
   (let [port (Integer/parseInt (or (System/getenv "PORT") "8080"))]
     (println (str "Servidor iniciando na porta " port))
     (jetty/run-jetty app {:port port :join? false})))
-
-(defn init [] (println "Iniciando servidor..."))
-(defn destroy [] (println "Parando servidor..."))
