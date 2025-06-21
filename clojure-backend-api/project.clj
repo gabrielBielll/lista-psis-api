@@ -14,9 +14,9 @@
                  [buddy/buddy-hashers "1.8.1"]
                  [cheshire "5.11.0"]
                  [ring-cors "0.1.13"]
-                 ;; --- NOVA BIBLIOTECA DE MÉTRICAS ---
+                 ;; --- NOVA BIBLIOTECA DE MÉTRICAS (CORRIGIDO) ---
                  [metrics-clojure "2.10.0"]
-                 [metrics-clojure-prometheus "2.10.0"]]
+                 [metrics-clojure/metrics-clojure-prometheus "2.10.0"]] ; <-- CORRIGIDO AQUI
 
   :main ^:skip-aot clojure-backend-api.core
   :target-path "target/%s"
