@@ -1,0 +1,21 @@
+metrics:
+  # Diretório para armazenamento temporário do agent
+  wal_directory: '/tmp/grafana-agent-wal'
+  global:
+    # Configuração para enviar métricas para a Grafana Cloud
+    remote_write:
+      - url: ${GRAFANA_REMOTE_WRITE_URL} # <-- LIDO DA VARIÁVEL DE AMBIENTE
+        basic_auth:
+          username: ${GRAFANA_USERNAME} # <-- LIDO DA VARIÁVEL DE AMBIENTE
+          password: ${GRAFANA_API_KEY}  # <-- LIDO DA VARIÁVEL DE AMBIENTE
+
+  # Lista de configurações de coleta
+  configs:
+    - name: clojure-api-integration
+      # Configurações de como coletar as métricas
+      scrape_configs:
+        - job_name: 'clojure-backend-api'
+          scrape_interval: 15s
+          static_configs:
+            # O agent irá encontrar o serviço 'app' na porta 8080 dentro da rede do Docker
+            - targets: ['app:8080']
