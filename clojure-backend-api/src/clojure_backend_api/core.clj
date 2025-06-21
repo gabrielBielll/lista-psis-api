@@ -9,32 +9,12 @@
     [environ.core :refer [env]]
     [buddy.hashers :as hashers]
     [cheshire.core :as json]
-    [ring.middleware.cors :refer [wrap-cors]])
-  (:import 
-    (org.postgresql.util PGobject)
-    (io.prometheus.client CollectorRegistry Counter Gauge)
-    (io.prometheus.client.exporter.common TextFormat)
-    (java.io StringWriter))
+    [ring.middleware.cors :refer [wrap-cors]]
+    ;; VOLTANDO para metrics-clojure
+    [metrics.ring.instrument :refer [instrument]]
+    [metrics.ring.expose :refer [expose-metrics-as-json]])
+  (:import (org.postgresql.util PGobject))
   (:gen-class))
-
-;;; ----------------------------------------------------------------
-;;; Configuração do Prometheus (apenas Java)
-;;; ----------------------------------------------------------------
-(defonce ^CollectorRegistry registry (CollectorRegistry.))
-
-;; Métricas simples
-(defonce http-requests-total
-  (-> (Counter/build)
-      (.name "http_requests_total")
-      (.help "Total number of HTTP requests")
-      (.labelNames (into-array String ["method" "endpoint" "status"]))
-      (.register registry)))
-
-(defonce db-connections
-  (-> (Gauge/build)
-      (.name "database_connections")
-      (.help "Number of database connections")
-      (.register registry)))
 
 ;;; ----------------------------------------------------------------
 ;;; Suas funções existentes (sem alteração)
@@ -98,51 +78,35 @@
       (println (str "ERRO GRAVE em update-schedule!: " (.getMessage e)))
       nil)))
 
-;;; ----------------------------------------------------------------
-;;; Handlers com métricas básicas
-;;; ----------------------------------------------------------------
 (defn get-all-horarios-handler []
-  (.inc (.labels http-requests-total (into-array String ["GET" "/api/horarios" "200"])))
   (let [schedules (get-all-schedules)]
     (resp/response schedules)))
 
 (defn update-horarios-handler [request]
   (let [{:keys [id senha horarios]} (:body request)]
     (if (or (nil? id) (nil? senha) (nil? horarios))
-      (do
-        (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/editar" "400"])))
-        (-> (resp/response {:message "Requisição inválida. Campos 'id', 'senha' e 'horarios' são obrigatórios."})
-            (resp/status 400)))
+      (-> (resp/response {:message "Requisição inválida. Campos 'id', 'senha' e 'horarios' são obrigatórios."})
+          (resp/status 400))
       (if-let [psi (get-psychologist-by-id id)]
         (if (hashers/check senha (:senha_hash psi))
           (do
-            (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/editar" "200"])))
             (update-schedule! id horarios)
             (-> (resp/response {:message "Horários atualizados com sucesso!"})
                 (resp/status 200)))
-          (do
-            (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/editar" "401"])))
-            (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
-                (resp/status 401))))
-        (do
-          (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/editar" "401"])))
           (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
-              (resp/status 401)))))))
+              (resp/status 401)))
+        (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
+            (resp/status 401))))))
 
 (defn create-psychologist-handler [request]
   (if (>= (count-psychologists) 5)
-    (do
-      (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/criar" "403"])))
-      (-> (resp/response {:message "Limite de 5 psicólogas atingido. Não é possível criar mais."})
-          (resp/status 403)))
+    (-> (resp/response {:message "Limite de 5 psicólogas atingido. Não é possível criar mais."})
+        (resp/status 403))
     (let [{:keys [id senha]} (:body request)]
       (if (or (nil? id) (nil? senha))
-        (do
-          (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/criar" "400"])))
-          (-> (resp/response {:message "Requisição inválida. Campos 'id' e 'senha' são obrigatórios."})
-              (resp/status 400)))
+        (-> (resp/response {:message "Requisição inválida. Campos 'id' e 'senha' são obrigatórios."})
+            (resp/status 400))
         (try
-          (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/criar" "201"])))
           (let [hashed-password (hashers/derive senha)]
             (jdbc/insert! db-spec :horarios
                           {:psicologa_id id
@@ -151,19 +115,8 @@
             (-> (resp/response {:message "Psicólogo criado com sucesso!"})
                 (resp/status 201)))
           (catch Exception e
-            (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/criar" "500"])))
             (-> (resp/response {:message (str "Erro ao criar psicólogo: " (.getMessage e))})
                 (resp/status 500))))))))
-
-;;; ----------------------------------------------------------------
-;;; Endpoint para métricas do Prometheus
-;;; ----------------------------------------------------------------
-(defn metrics-handler []
-  (let [writer (StringWriter.)]
-    (TextFormat/write004 writer (.metricFamilySamples registry))
-    {:status 200
-     :headers {"Content-Type" TextFormat/CONTENT_TYPE_004}
-     :body (.toString writer)}))
 
 ;;; ----------------------------------------------------------------
 ;;; Rotas
@@ -173,8 +126,6 @@
     {:status 200
      :headers {"Content-Type" "text/plain"}
      :body "OK"})
-     
-  (GET "/metrics" [] (metrics-handler))
 
   (context "/api" []
     (GET "/horarios" [] (get-all-horarios-handler))
@@ -182,12 +133,18 @@
     (POST "/horarios/criar" request (create-psychologist-handler request)))
   (route/not-found "Recurso não encontrado"))
 
+;;; ----------------------------------------------------------------
+;;; App com middlewares
+;;; ----------------------------------------------------------------
 (def app
   (-> app-routes
       (wrap-cors :access-control-allow-origin [#".*"]
                  :access-control-allow-methods [:get :post])
       (wrap-json-body {:keywords? true})
-      (wrap-json-response)))
+      (wrap-json-response)
+      ;; ADICIONANDO os middlewares de métricas
+      (expose-metrics-as-json "/metrics")  ; ← ENDPOINT /metrics
+      (instrument)))                       ; ← INSTRUMENTAÇÃO
 
 ;;; ----------------------------------------------------------------
 ;;; Main
