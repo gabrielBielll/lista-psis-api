@@ -9,24 +9,35 @@
     [environ.core :refer [env]]
     [buddy.hashers :as hashers]
     [cheshire.core :as json]
-    [ring.middleware.cors :refer [wrap-cors]]
-    ;; --- REQUIRES DA NOVA BIBLIOTECA DE MÉTRICAS ---
-    [metrics.ring.instrument :refer [instrument]]
-    [metrics.reporters.prometheus :as prometheus-reporter])
-  (:import (org.postgresql.util PGobject))
+    [ring.middleware.cors :refer [wrap-cors]])
+  (:import 
+    (org.postgresql.util PGobject)
+    (io.prometheus.client CollectorRegistry Counter Gauge)
+    (io.prometheus.client.exporter.common TextFormat)
+    (java.io StringWriter))
   (:gen-class))
 
+;;; ----------------------------------------------------------------
+;;; Configuração do Prometheus (apenas Java)
+;;; ----------------------------------------------------------------
+(defonce ^CollectorRegistry registry (CollectorRegistry.))
+
+;; Métricas simples
+(defonce http-requests-total
+  (-> (Counter/build)
+      (.name "http_requests_total")
+      (.help "Total number of HTTP requests")
+      (.labelNames (into-array String ["method" "endpoint" "status"]))
+      (.register registry)))
+
+(defonce db-connections
+  (-> (Gauge/build)
+      (.name "database_connections")
+      (.help "Number of database connections")
+      (.register registry)))
 
 ;;; ----------------------------------------------------------------
-;;; Configuração do Reporter do Prometheus
-;;; ----------------------------------------------------------------
-;; Cria e inicia um reporter que irá coletar as métricas
-(defonce prom-reporter (prometheus-reporter/reporter))
-(prometheus-reporter/start prom-reporter)
-
-
-;;; ----------------------------------------------------------------
-;;; Configuração do Banco de Dados (sem alteração)
+;;; Suas funções existentes (sem alteração)
 ;;; ----------------------------------------------------------------
 (def db-spec
   (let [db-url (env :database-url)]
@@ -36,7 +47,6 @@
         (println "AVISO: DATABASE_URL não definida. O banco de dados não funcionará.")
         nil))))
 
-;;; ... (o restante das suas funções de BD e auxiliares permanecem iguais) ...
 (defn ->jsonb [data]
   (doto (PGobject.)
     (.setType "jsonb")
@@ -88,35 +98,51 @@
       (println (str "ERRO GRAVE em update-schedule!: " (.getMessage e)))
       nil)))
 
+;;; ----------------------------------------------------------------
+;;; Handlers com métricas básicas
+;;; ----------------------------------------------------------------
 (defn get-all-horarios-handler []
+  (.inc (.labels http-requests-total (into-array String ["GET" "/api/horarios" "200"])))
   (let [schedules (get-all-schedules)]
     (resp/response schedules)))
 
 (defn update-horarios-handler [request]
   (let [{:keys [id senha horarios]} (:body request)]
     (if (or (nil? id) (nil? senha) (nil? horarios))
-      (-> (resp/response {:message "Requisição inválida. Campos 'id', 'senha' e 'horarios' são obrigatórios."})
-          (resp/status 400))
+      (do
+        (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/editar" "400"])))
+        (-> (resp/response {:message "Requisição inválida. Campos 'id', 'senha' e 'horarios' são obrigatórios."})
+            (resp/status 400)))
       (if-let [psi (get-psychologist-by-id id)]
         (if (hashers/check senha (:senha_hash psi))
           (do
+            (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/editar" "200"])))
             (update-schedule! id horarios)
             (-> (resp/response {:message "Horários atualizados com sucesso!"})
                 (resp/status 200)))
+          (do
+            (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/editar" "401"])))
+            (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
+                (resp/status 401))))
+        (do
+          (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/editar" "401"])))
           (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
-              (resp/status 401)))
-        (-> (resp/response {:message "Não autorizado. Verifique o ID e a senha."})
-            (resp/status 401))))))
+              (resp/status 401)))))))
 
 (defn create-psychologist-handler [request]
   (if (>= (count-psychologists) 5)
-    (-> (resp/response {:message "Limite de 5 psicólogas atingido. Não é possível criar mais."})
-        (resp/status 403))
+    (do
+      (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/criar" "403"])))
+      (-> (resp/response {:message "Limite de 5 psicólogas atingido. Não é possível criar mais."})
+          (resp/status 403)))
     (let [{:keys [id senha]} (:body request)]
       (if (or (nil? id) (nil? senha))
-        (-> (resp/response {:message "Requisição inválida. Campos 'id' e 'senha' são obrigatórios."})
-            (resp/status 400))
+        (do
+          (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/criar" "400"])))
+          (-> (resp/response {:message "Requisição inválida. Campos 'id' e 'senha' são obrigatórios."})
+              (resp/status 400)))
         (try
+          (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/criar" "201"])))
           (let [hashed-password (hashers/derive senha)]
             (jdbc/insert! db-spec :horarios
                           {:psicologa_id id
@@ -125,24 +151,30 @@
             (-> (resp/response {:message "Psicólogo criado com sucesso!"})
                 (resp/status 201)))
           (catch Exception e
+            (.inc (.labels http-requests-total (into-array String ["POST" "/api/horarios/criar" "500"])))
             (-> (resp/response {:message (str "Erro ao criar psicólogo: " (.getMessage e))})
                 (resp/status 500))))))))
 
+;;; ----------------------------------------------------------------
+;;; Endpoint para métricas do Prometheus
+;;; ----------------------------------------------------------------
+(defn metrics-handler []
+  (let [writer (StringWriter.)]
+    (TextFormat/write004 writer (.metricFamilySamples registry))
+    {:status 200
+     :headers {"Content-Type" TextFormat/CONTENT_TYPE_004}
+     :body (.toString writer)}))
 
 ;;; ----------------------------------------------------------------
-;;; Definição de Rotas e Middlewares
+;;; Rotas
 ;;; ----------------------------------------------------------------
-
 (defroutes app-routes
   (GET "/health" []
     {:status 200
      :headers {"Content-Type" "text/plain"}
      :body "OK"})
      
-  ;; Rota para o Prometheus fazer o 'scrape' das métricas
-  (GET "/metrics" [] {:status 200
-                      :headers {"Content-Type" "text/plain"}
-                      :body (prometheus-reporter/report-str prom-reporter)})
+  (GET "/metrics" [] (metrics-handler))
 
   (context "/api" []
     (GET "/horarios" [] (get-all-horarios-handler))
@@ -155,15 +187,11 @@
       (wrap-cors :access-control-allow-origin [#".*"]
                  :access-control-allow-methods [:get :post])
       (wrap-json-body {:keywords? true})
-      (wrap-json-response)
-      ;; Adiciona o middleware de instrumentação da nova biblioteca
-      (instrument)))
-
+      (wrap-json-response)))
 
 ;;; ----------------------------------------------------------------
-;;; Função Principal (sem alteração)
+;;; Main
 ;;; ----------------------------------------------------------------
-
 (defn -main [& args]
   (let [port (Integer/parseInt (or (System/getenv "PORT") "8080"))]
     (println (str "Servidor iniciando na porta " port))
