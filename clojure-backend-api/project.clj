@@ -13,17 +13,20 @@
                  [environ "1.2.0"]
                  [buddy/buddy-hashers "1.8.1"]
                  [cheshire "5.11.0"]
-                 [ring-cors "0.1.13"]] ; <-- NOVA DEPENDÊNCIA
+                 [ring-cors "0.1.13"]
+                 ;; --- DEPENDÊNCIAS DO PROMETHEUS ---
+                 [io.prometheus/simpleclient_hotspot "0.11.0"]
+                 [iapetus "0.1.12"]]
 
   :main ^:skip-aot clojure-backend-api.core
   :target-path "target/%s"
-  
+ 
   :plugins [[lein-ring "0.12.6"]]
 
   :ring {:handler clojure-backend-api.core/app
          :init clojure-backend-api.core/init
          :destroy clojure-backend-api.core/destroy}
-  
+ 
   :profiles
   {:uberjar {:aot :all
              :uberjar-name "clojure-backend-api.jar"}})
