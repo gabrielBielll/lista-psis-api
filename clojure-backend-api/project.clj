@@ -17,11 +17,9 @@
                  [buddy/buddy-hashers "1.8.1"]
                  [cheshire "5.11.0"]
                  [ring-cors "0.1.13"]
-                 ;; Apenas Prometheus Java (sem metrics-clojure problemático)
-                 [io.prometheus/simpleclient "0.16.0"]
-                 [io.prometheus/simpleclient_hotspot "0.16.0"]
-                 [io.prometheus/simpleclient_servlet "0.16.0"]
-                 [io.prometheus/simpleclient_common "0.16.0"]]
+                 ;; VOLTANDO para metrics-clojure que funciona
+                 [metrics-clojure "2.10.0"]
+                 [metrics-clojure-ring "2.10.0"]]
 
   :main ^:skip-aot clojure-backend-api.core
   :target-path "target/%s"
