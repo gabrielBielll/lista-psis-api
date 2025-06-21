@@ -4,7 +4,6 @@
   :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
             :url "https://www.eclipse.org/legal/epl-2.0/"}
 
-  ;; ADICIONA O REPOSITÓRIO CLOJARS EXPLÍCITAMENTE
   :repositories [["clojars" "https://repo.clojars.org/"]]
 
   :dependencies [[org.clojure/clojure "1.11.1"]
@@ -18,9 +17,7 @@
                  [buddy/buddy-hashers "1.8.1"]
                  [cheshire "5.11.0"]
                  [ring-cors "0.1.13"]
-                 ;; Métricas - NOMES CORRETOS
-                 [metrics-clojure "2.10.0"]
-                 [metrics-clojure-ring "2.10.0"]  ; ← CORREÇÃO AQUI
+                 ;; Apenas Prometheus Java (sem metrics-clojure problemático)
                  [io.prometheus/simpleclient "0.16.0"]
                  [io.prometheus/simpleclient_hotspot "0.16.0"]
                  [io.prometheus/simpleclient_servlet "0.16.0"]
