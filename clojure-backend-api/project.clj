@@ -16,7 +16,7 @@
                  [ring-cors "0.1.13"]
                  ;; --- Dependências do Prometheus (CORRIGIDO) ---
                  [io.prometheus/simpleclient_hotspot "0.11.0"]
-                 [funcool/iapetus "0.1.12"]] ; <-- CORRIGIDO AQUI
+                 [io.github.clj-prometheus/iapetus "0.1.12"]] ; <-- CORRIGIDO AQUI (NOME VERIFICADO)
 
   :main ^:skip-aot clojure-backend-api.core
   :target-path "target/%s"
