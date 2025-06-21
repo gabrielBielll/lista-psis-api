@@ -14,9 +14,9 @@
                  [buddy/buddy-hashers "1.8.1"]
                  [cheshire "5.11.0"]
                  [ring-cors "0.1.13"]
-                 ;; --- DEPENDÊNCIAS DO PROMETHEUS ---
+                 ;; --- Dependências do Prometheus (CORRIGIDO) ---
                  [io.prometheus/simpleclient_hotspot "0.11.0"]
-                 [iapetus "0.1.12"]]
+                 [funcool/iapetus "0.1.12"]] ; <-- CORRIGIDO AQUI
 
   :main ^:skip-aot clojure-backend-api.core
   :target-path "target/%s"
