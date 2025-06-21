@@ -1,1 +1,34 @@
+services:
+  # Serviço para a sua API Clojure
+  - type: web
+    name: clojure-api
+    env: docker
+    # Caminho para o seu Dockerfile, se não estiver na raiz
+    # dockerfilePath: ./Dockerfile 
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nome-do-seu-banco-de-dados # <-- IMPORTANTE: Substitua pelo nome do seu DB no Render
+          property: connectionString
+
+  # Serviço para o Grafana Agent
+  - type: worker # Um worker é um serviço que corre em segundo plano
+    name: grafana-agent
+    env: docker
+    # Usa a imagem oficial do Grafana Agent
+    dockerImage: grafana/agent:latest
+    # Comando para iniciar o agent com o ficheiro de configuração
+    dockerCommand: "-config.file=/etc/grafana-agent/agent.yaml"
+    # Monta um disco para o ficheiro de configuração
+    volumes:
+      - name: agent-config
+        mountPath: /etc/grafana-agent
+    # Adicione as suas variáveis de ambiente do Grafana aqui
+    envVars:
+      - key: GRAFANA_REMOTE_WRITE_URL
+        value: O_SEU_VALOR_AQUI # <-- Cole o valor que copiou
+      - key: GRAFANA_USERNAME
+        value: O_SEU_VALOR_AQUI # <-- Cole o valor que copiou
+      - key: GRAFANA_API_KEY
+        value: O_SEU_VALOR_AQUI # <-- Cole o valor que copiou
 
