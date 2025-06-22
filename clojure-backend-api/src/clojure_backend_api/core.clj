@@ -10,7 +10,6 @@
     [buddy.hashers :as hashers]
     [cheshire.core :as json]
     [ring.middleware.cors :refer [wrap-cors]]
-    ;; SIMPLIFICADO: Apenas o básico que funciona
     [metrics.ring.instrument :refer [instrument]])
   (:import (org.postgresql.util PGobject))
   (:gen-class))
@@ -59,8 +58,13 @@
 (defn get-all-schedules []
   (try
     (if db-spec
-      (let [results (jdbc/query db-spec ["SELECT psicologa_id, horarios_disponiveis FROM horarios"])]
-        (mapv (fn [row] (update row :horarios_disponiveis pgobject->map))
+      (let [results (jdbc/query db-spec ["SELECT psicologa_id, nome, horarios_disponiveis FROM horarios"])]
+        ;; MODIFICAÇÃO CHAVE (FASE 1):
+        ;; Garante que a API seja robusta e não retorne `nil` para o nome.
+        (mapv (fn [row]
+                (-> row
+                    (update :nome #(or % "Nome não cadastrado")) ; Se :nome for nil, usa o texto padrão.
+                    (update :horarios_disponiveis pgobject->map)))
               results))
       (do
         (println "ERRO FATAL: A variável de ambiente DATABASE_URL não está definida.")
@@ -71,7 +75,8 @@
 
 (defn get-psychologist-by-id [id]
   (try
-    (first (jdbc/query db-spec ["SELECT id, psicologa_id, senha_hash FROM horarios WHERE psicologa_id = ?" id]))
+    ;; MODIFICADO: Seleciona também o nome
+    (first (jdbc/query db-spec ["SELECT id, psicologa_id, nome, senha_hash FROM horarios WHERE psicologa_id = ?" id]))
     (catch Exception e
       (println (str "ERRO GRAVE em get-psychologist-by-id: " (.getMessage e)))
       nil)))
@@ -117,18 +122,22 @@
   (if (>= (count-psychologists) 5)
     (-> (resp/response {:message "Limite de 5 psicólogas atingido. Não é possível criar mais."})
         (resp/status 403))
-    (let [{:keys [id senha]} (:body request)]
-      (if (or (nil? id) (nil? senha))
-        (-> (resp/response {:message "Requisição inválida. Campos 'id' e 'senha' são obrigatórios."})
+    ;; MODIFICADO: Extrai o 'nome' do corpo da requisição
+    (let [{:keys [id nome senha]} (:body request)]
+      ;; MODIFICADO: Valida a presença do campo 'nome'
+      (if (or (nil? id) (nil? nome) (nil? senha))
+        (-> (resp/response {:message "Requisição inválida. Campos 'id', 'nome' e 'senha' são obrigatórios."})
             (resp/status 400))
         (try
           (let [hashed-password (hashers/derive senha)]
+            ;; MODIFICADO: Insere o 'nome' no banco de dados
             (jdbc/insert! db-spec :horarios
                           {:psicologa_id id
+                           :nome nome
                            :senha_hash hashed-password
-                           :horarios_disponiveis (->jsonb {})})
-            (-> (resp/response {:message "Psicólogo criado com sucesso!"})
-                (resp/status 201)))
+                           :horarios_disponiveis (->jsonb {})}))
+          (-> (resp/response {:message "Psicólogo criado com sucesso!"})
+              (resp/status 201))
           (catch Exception e
             (-> (resp/response {:message (str "Erro ao criar psicólogo: " (.getMessage e))})
                 (resp/status 500))))))))
@@ -141,22 +150,22 @@
         uptime-seconds (/ (- current-time start-time) 1000)
         request-count @request-counter
         psychologist-count (count-psychologists)]
-    (str 
-     "# HELP http_requests_total Total number of HTTP requests\n"
-     "# TYPE http_requests_total counter\n"
-     "http_requests_total " request-count "\n\n"
-     
-     "# HELP psychologists_total Number of psychologists in database\n"
-     "# TYPE psychologists_total gauge\n"
-     "psychologists_total " psychologist-count "\n\n"
-     
-     "# HELP app_uptime_seconds Application uptime in seconds\n"
-     "# TYPE app_uptime_seconds gauge\n"
-     "app_uptime_seconds " (int uptime-seconds) "\n\n"
-     
-     "# HELP app_info Application information\n"
-     "# TYPE app_info gauge\n"
-     "app_info{version=\"1.0\",service=\"clojure-psis-api\",environment=\"production\"} 1\n")))
+    (str
+      "# HELP http_requests_total Total number of HTTP requests\n"
+      "# TYPE http_requests_total counter\n"
+      "http_requests_total " request-count "\n\n"
+
+      "# HELP psychologists_total Number of psychologists in database\n"
+      "# TYPE psychologists_total gauge\n"
+      "psychologists_total " psychologist-count "\n\n"
+
+      "# HELP app_uptime_seconds Application uptime in seconds\n"
+      "# TYPE app_uptime_seconds gauge\n"
+      "app_uptime_seconds " (int uptime-seconds) "\n\n"
+
+      "# HELP app_info Application information\n"
+      "# TYPE app_info gauge\n"
+      "app_info{version=\"1.0\",service=\"clojure-psis-api\",environment=\"production\"} 1\n")))
 
 (defn prometheus-metrics-handler []
   {:status 200
@@ -171,8 +180,7 @@
     {:status 200
      :headers {"Content-Type" "text/plain"}
      :body "OK"})
-     
-  ;; Endpoint de métricas SUPER SIMPLES
+
   (GET "/metrics" [] (prometheus-metrics-handler))
 
   (context "/api" []
@@ -190,7 +198,7 @@
                  :access-control-allow-methods [:get :post])
       (wrap-json-body {:keywords? true})
       (wrap-json-response)
-      (instrument)))  ; Mantém instrumentação básica
+      (instrument)))
 
 ;;; ----------------------------------------------------------------
 ;;; Função Principal
