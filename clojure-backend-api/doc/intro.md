@@ -1,6 +1,6 @@
-# Guia da IA para o Projeto `clojure-backend-api`
+# Guia para o Projeto `clojure-backend-api`
 
-Este documento serve como um guia detalhado para que uma Inteligência Artificial (IA) possa entender e modificar o código do projeto `clojure-backend-api` de forma segura e eficaz.
+Este documento serve como um guia detalhado para que a seja possivel entender e modificar o código do projeto `clojure-backend-api` de forma segura e eficaz.
 
 ## 1. Visão Geral
 
