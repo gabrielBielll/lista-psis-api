@@ -119,8 +119,8 @@
 
 (defn create-psychologist-handler [request]
   (swap! request-counter inc)
-  (if (>= (count-psychologists) 5)
-    (-> (resp/response {:message "Limite de 5 psicólogas atingido. Não é possível criar mais."})
+  (if (>= (count-psychologists) 10)
+    (-> (resp/response {:message "Limite de 10 psicólogas atingido. Não é possível criar mais."})
         (resp/status 403))
     ;; MODIFICADO: Extrai o 'nome' do corpo da requisição
     (let [{:keys [id nome senha]} (:body request)]
