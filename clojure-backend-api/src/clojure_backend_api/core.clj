@@ -21,7 +21,7 @@
            (java.nio.charset StandardCharsets)
            (java.security MessageDigest SecureRandom)
            (java.text Normalizer Normalizer$Form)
-           (java.time Instant OffsetDateTime ZonedDateTime Duration)
+           (java.time Instant OffsetDateTime ZonedDateTime Duration ZoneId DayOfWeek LocalDate LocalDateTime LocalTime)
            (java.sql Timestamp)
            (java.util Base64 UUID)
            (java.util.concurrent Executors TimeUnit ScheduledExecutorService)
@@ -296,18 +296,79 @@
    :id (:id row)
    :available (if (contains? row :disponivel) (:disponivel row) true)})
 
+(def ^:private deep-time-zone (ZoneId/of "America/Sao_Paulo"))
+(def ^:private weekday->schedule-key
+  {DayOfWeek/MONDAY :seg
+   DayOfWeek/TUESDAY :ter
+   DayOfWeek/WEDNESDAY :qua
+   DayOfWeek/THURSDAY :qui
+   DayOfWeek/FRIDAY :sex
+   DayOfWeek/SATURDAY :sab
+   DayOfWeek/SUNDAY :dom})
+(def ^:private legacy-slot-duration (Duration/ofMinutes 50))
+
+(defn- legacy-schedule-for-psychologist [psychologist-id]
+  (some-> (first (jdbc/query db-spec
+                              ["SELECT horarios_disponiveis FROM horarios WHERE CAST(psicologa_id AS TEXT) = ?"
+                               (str psychologist-id)]))
+          :horarios_disponiveis
+          pgobject->map))
+
+(defn- google-calendar-connected? [psychologist-id]
+  (boolean
+    (first (jdbc/query db-spec
+                       ["SELECT 1 FROM google_calendar_connections WHERE psicologa_id = ?"
+                        (str psychologist-id)]))))
+
+(defn- scheduled-times-for-day [schedule day-key]
+  (or (get schedule day-key)
+      (get schedule (name day-key))
+      []))
+
+(defn- legacy-schedule->slots [schedule start end]
+  (let [first-day (.toLocalDate (.atZone start deep-time-zone))
+        last-day (.toLocalDate (.atZone (.minusMillis end 1) deep-time-zone))]
+    (loop [day first-day slots []]
+      (if (.isAfter day last-day)
+        slots
+        (let [schedule-key (weekday->schedule-key (.getDayOfWeek day))
+              day-slots (->> (scheduled-times-for-day schedule schedule-key)
+                             (keep (fn [time]
+                                     (try
+                                       (let [slot-start (.toInstant (.atZone (LocalDateTime/of day (LocalTime/parse (str time)))
+                                                                         deep-time-zone))
+                                             slot-end (.plus slot-start legacy-slot-duration)
+                                             slot {:start slot-start :end slot-end :source :manual-weekly}]
+                                         (when (slot-overlaps? slot {:start start :end end})
+                                           slot))
+                                       (catch Exception _
+                                         ;; Um valor inválido na grade manual não
+                                         ;; derruba a disponibilidade pública.
+                                         nil)))))
+              ]
+          (recur (.plusDays day 1) (into slots day-slots)))))))
+
 (defn availability-for-psychologist [psychologist-id start end]
-  (let [automatic (map #(row->slot % :google)
+  (let [google-connected (google-calendar-connected? psychologist-id)
+        automatic (map #(row->slot % :google)
                        (db-slots "availability_auto_slots" psychologist-id start end))
+        ;; A grade semanal existente continua sendo o modo manual. Quando uma
+        ;; agenda Google é vinculada, ela se torna a fonte principal para não
+        ;; publicar uma disponibilidade manual desatualizada em paralelo.
+        weekly-manual (if google-connected
+                        []
+                        (legacy-schedule->slots (or (legacy-schedule-for-psychologist psychologist-id) {})
+                                                start end))
         overrides (map #(row->slot % :manual)
                        (db-slots "availability_manual_overrides" psychologist-id start end))
         blocks (filter #(false? (:available %)) overrides)
-        visible-automatic (remove #(some (partial slot-overlaps? %) blocks) automatic)
+        visible-base-slots (remove #(some (partial slot-overlaps? %) blocks)
+                                   (concat automatic weekly-manual))
         manual-openings (filter :available overrides)
         unique-slots (vals (reduce (fn [acc slot]
                                      (assoc acc [(:start slot) (:end slot)] slot))
                                    {}
-                                   (concat visible-automatic manual-openings)))]
+                                   (concat visible-base-slots manual-openings)))]
     (sort-by :start unique-slots)))
 
 (defn- public-slot [slot]
@@ -316,13 +377,15 @@
    :available true})
 
 (defn- availability-ids [start end]
-  (let [auto-ids (jdbc/query db-spec
+  (let [weekly-ids (jdbc/query db-spec
+                               ["SELECT psicologa_id FROM horarios ORDER BY psicologa_id"])
+        auto-ids (jdbc/query db-spec
                              ["SELECT DISTINCT psicologa_id FROM availability_auto_slots WHERE inicia_em < ? AND termina_em > ?"
                               (Timestamp/from end) (Timestamp/from start)])
         manual-ids (jdbc/query db-spec
                                ["SELECT DISTINCT psicologa_id FROM availability_manual_overrides WHERE inicia_em < ? AND termina_em > ?"
                                 (Timestamp/from end) (Timestamp/from start)])]
-    (->> (concat auto-ids manual-ids)
+    (->> (concat weekly-ids auto-ids manual-ids)
          (map :psicologa_id)
          (map str)
          distinct

@@ -2,7 +2,8 @@
   (:require [clojure.test :refer :all]
             [clojure-backend-api.core :refer :all]
             [cheshire.core :as json])
-  (:import (org.postgresql.util PGobject)))
+  (:import (org.postgresql.util PGobject)
+           (java.time Instant)))
 
 (deftest test-jsonb-conversion
   (testing "->jsonb function"
@@ -229,6 +230,21 @@
       (is (empty? (slots-fn [free-event busy-event]))))
     (testing "eventos em outro horário não escondem a disponibilidade"
       (is (= ["blue-available"] (mapv :google-event-id (slots-fn [free-event different-event])))))))
+
+(deftest test-legacy-weekly-manual-schedule
+  (let [slots-fn @#'clojure-backend-api.core/legacy-schedule->slots
+        start (Instant/parse "2026-08-03T00:00:00Z") ; segunda-feira em São Paulo
+        end (Instant/parse "2026-08-05T00:00:00Z")
+        slots (slots-fn {:seg ["09:00" "09:30" "inválido"]
+                         :ter ["10:00"]}
+                        start end)]
+    (testing "a grade semanal é convertida em slots datados no fuso da Deep"
+      (is (= ["2026-08-03T12:00:00Z"
+              "2026-08-03T12:30:00Z"
+              "2026-08-04T13:00:00Z"]
+             (mapv #(str (:start %)) slots))))
+    (testing "um horário inválido não interrompe a disponibilidade pública"
+      (is (= 3 (count slots))))))
 
 (deftest test-health-check
   (testing "Health check route"

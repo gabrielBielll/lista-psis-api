@@ -30,6 +30,13 @@ Qualquer outro evento sobreposto bloqueia a publicação do horário — incluin
 sessões com paciente, `[INDISPONÍVEL]`, férias e bloqueios pessoais. Assim,
 nenhum título ou dado de paciente é exposto pelo endpoint público.
 
+## Convivência com a agenda manual
+
+A grade semanal manual já existente continua publicada para psicólogas que
+ainda não têm agenda Google vinculada. Ao vincular uma agenda Google, os
+eventos `[DISPONÍVEL]` passam a ser a fonte principal daquela psicóloga para
+evitar conflitos com uma grade semanal que tenha ficado desatualizada.
+
 Uma exceção manual salva no gestor tem precedência sobre a importação:
 
 - `disponivel: false` bloqueia um horário importado;
