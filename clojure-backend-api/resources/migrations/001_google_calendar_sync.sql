@@ -1,5 +1,15 @@
--- Estruturas novas. Elas não alteram nem removem a tabela legada `horarios`.
--- `psicologa_id` é texto aqui para aceitar tanto os IDs numéricos atuais quanto
+-- Em produção, a tabela `horarios` já existe. Criamos apenas quando a base é
+-- nova (como staging), para que a aplicação possa ser validada isoladamente.
+CREATE TABLE IF NOT EXISTS horarios (
+  id BIGSERIAL PRIMARY KEY,
+  psicologa_id VARCHAR(255) NOT NULL UNIQUE,
+  nome VARCHAR(255) NOT NULL,
+  senha_hash TEXT NOT NULL,
+  horarios_disponiveis JSONB NOT NULL DEFAULT '{}'::jsonb,
+  atualizado_em TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- `psicologa_id` é texto para aceitar tanto IDs numéricos atuais quanto
 -- futuros identificadores alfanuméricos.
 
 CREATE TABLE IF NOT EXISTS app_admins (
