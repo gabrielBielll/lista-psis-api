@@ -1027,7 +1027,7 @@
                        (count (filter #(some #{"cor-azul-mas-sem-titulo"} (:reasons %)) classified))}
                       :distribuicaoCoresTodos
                       (frequencies (map #(google-color-name (:color %) (:color %)) classified))}))
-                 connections)}))
+                 connections)})))
         (catch Exception e
           (-> (resp/response {:message (or (.getMessage e) "Falha ao diagnosticar as agendas.")})
               (resp/status 502)))))))
