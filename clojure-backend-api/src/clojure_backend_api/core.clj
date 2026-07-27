@@ -959,9 +959,13 @@
 ;;; App com middlewares
 ;;; ----------------------------------------------------------------
 (defn- configured-cors-origins []
-  (let [configured (some-> (env :allowed-origins) (str/split #","))]
-    (if (seq configured)
-      (mapv str/trim configured)
+  (let [raw (some-> (env :allowed-origins) (str/split #","))
+        origins (->> raw (map str/trim) (remove str/blank?))]
+    (if (seq origins)
+      ;; wrap-cors compara cada Origin com re-matches, então os domínios
+      ;; precisam ser Patterns (não Strings). Pattern/quote garante que a
+      ;; comparação seja literal, sem os pontos virarem curinga.
+      (mapv #(re-pattern (java.util.regex.Pattern/quote %)) origins)
       ;; Seguro para desenvolvimento local. Staging/produção deve declarar os
       ;; domínios reais em ALLOWED_ORIGINS, separados por vírgula.
       [#"^http://localhost(:[0-9]+)?$"])))
