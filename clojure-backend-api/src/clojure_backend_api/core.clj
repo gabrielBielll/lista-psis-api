@@ -516,7 +516,7 @@
       (str (.encodeToString encoder iv) "." (.encodeToString encoder encrypted)))))
 
 (defn- decrypt-google-token [payload]
-  (let [[encoded-iv encoded-token] (str/split payload #"\\." 2)
+  (let [[encoded-iv encoded-token] (str/split payload #"\." 2)
         decoder (Base64/getUrlDecoder)
         iv (.decode decoder encoded-iv)
         encrypted (.decode decoder encoded-token)
@@ -975,7 +975,9 @@
       (wrap-cors :access-control-allow-origin (configured-cors-origins)
                  :access-control-allow-methods [:get :post :delete]
                  :access-control-allow-headers ["Content-Type" "Authorization"]
-                 :access-control-allow-credentials true)
+                 ;; String, não Boolean: ring.util.servlet quebra ao serializar
+                 ;; um header com valor Boolean ("Don't know how to create ISeq").
+                 :access-control-allow-credentials "true")
       (wrap-cookies)
       (wrap-params)
       (wrap-json-body {:keywords? true})
