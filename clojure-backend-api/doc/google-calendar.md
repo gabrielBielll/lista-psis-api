@@ -18,9 +18,17 @@ funciona e é o caso atual da clínica.
 
 ## Regra de disponibilidade
 
-Somente eventos cujo título contém `[SITE-LIVRE]` são publicados. Um evento
-normal que se sobreponha a ele impede a publicação do horário. Cores são
-apenas visuais; não fazem parte da regra de segurança.
+Um horário é publicado somente quando o evento atende **aos dois critérios**
+da convenção da Deep:
+
+- título `[DISPONÍVEL]` (o sistema também aceita a versão sem acento);
+- cor de evento Pavão ou Azul, que na API do Google correspondem aos IDs `7`
+  e `9`.
+
+Os IDs aceitos podem ser alterados por `GOOGLE_AVAILABLE_EVENT_COLOR_IDS`.
+Qualquer outro evento sobreposto bloqueia a publicação do horário — incluindo
+sessões com paciente, `[INDISPONÍVEL]`, férias e bloqueios pessoais. Assim,
+nenhum título ou dado de paciente é exposto pelo endpoint público.
 
 Uma exceção manual salva no gestor tem precedência sobre a importação:
 

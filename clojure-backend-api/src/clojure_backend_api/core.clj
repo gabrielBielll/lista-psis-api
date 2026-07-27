@@ -20,6 +20,7 @@
            (java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers HttpRequest$BodyPublishers)
            (java.nio.charset StandardCharsets)
            (java.security MessageDigest SecureRandom)
+           (java.text Normalizer Normalizer$Form)
            (java.time Instant OffsetDateTime ZonedDateTime Duration)
            (java.sql Timestamp)
            (java.util Base64 UUID)
@@ -656,17 +657,42 @@
     (when (and start end)
       {:start (parse-instant start) :end (parse-instant end)})))
 
-(defn- site-free-event? [event]
+(def ^:private default-available-event-color-ids #{"7" "9"})
+
+(defn- configured-available-event-color-ids []
+  (let [configured (some-> (env :google-available-event-color-ids)
+                           (str/split #","))
+        color-ids (->> configured
+                       (map str/trim)
+                       (remove str/blank?)
+                       set)]
+    (if (seq color-ids)
+      color-ids
+      default-available-event-color-ids)))
+
+(defn- normalize-calendar-text [value]
+  (-> (Normalizer/normalize (str (or value "")) Normalizer$Form/NFD)
+      (str/replace #"\p{M}" "")
+      str/upper-case))
+
+(defn- deep-available-event? [event]
+  ;; Convenção operacional da Deep: o título identifica a intenção e a cor
+  ;; confirma o status. IDs 7 (Pavão) e 9 (Azul/Blueberry) são aceitos por
+  ;; padrão; a lista pode ser ajustada por ambiente sem alterar o código.
   (and (not= "cancelled" (:status event))
-       (str/includes? (str/upper-case (or (:summary event) "")) "[SITE-LIVRE]")
+       (str/includes? (normalize-calendar-text (:summary event)) "[DISPONIVEL]")
+       (contains? (configured-available-event-color-ids) (str (:colorId event)))
        (google-event-period event)))
 
 (defn- google-events->available-slots [events]
   (let [regular-events (->> events
-                            (remove #(or (= "cancelled" (:status %)) (site-free-event? %)))
+                            ;; Qualquer evento que não seja um bloco azul
+                            ;; [DISPONÍVEL] bloqueia o intervalo: sessões,
+                            ;; [INDISPONÍVEL], férias e compromissos pessoais.
+                            (remove #(or (= "cancelled" (:status %)) (deep-available-event? %)))
                             (keep #(when-let [period (google-event-period %)] period)))]
     (->> events
-         (filter site-free-event?)
+         (filter deep-available-event?)
          (keep (fn [event]
                  (let [period (google-event-period event)]
                    (when-not (some #(slot-overlaps? period %) regular-events)

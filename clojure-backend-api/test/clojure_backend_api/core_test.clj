@@ -191,11 +191,24 @@
         (is (= "fake_metrics" (:body response)))))))
 
 (deftest test-google-event-availability-rule
-  (let [free-event {:id "site-free"
-                    :summary "[SITE-LIVRE] Atendimento"
+  (let [free-event {:id "blue-available"
+                    :summary "[DISPONÍVEL]"
+                    :colorId "7"
                     :status "confirmed"
                     :start {:dateTime "2026-08-01T09:00:00-03:00"}
                     :end {:dateTime "2026-08-01T09:50:00-03:00"}}
+        blue-event {:id "standard-blue-available"
+                    :summary "[DISPONIVEL]"
+                    :colorId "9"
+                    :status "confirmed"
+                    :start {:dateTime "2026-08-01T10:00:00-03:00"}
+                    :end {:dateTime "2026-08-01T10:50:00-03:00"}}
+        wrong-color-event {:id "gray-available"
+                           :summary "[DISPONÍVEL]"
+                           :colorId "8"
+                           :status "confirmed"
+                           :start {:dateTime "2026-08-01T11:00:00-03:00"}
+                           :end {:dateTime "2026-08-01T11:50:00-03:00"}}
         busy-event {:id "patient-event"
                     :summary "Atendimento"
                     :status "confirmed"
@@ -207,12 +220,15 @@
                          :start {:dateTime "2026-08-01T11:00:00-03:00"}
                          :end {:dateTime "2026-08-01T11:50:00-03:00"}}
         slots-fn @#'clojure-backend-api.core/google-events->available-slots]
-    (testing "somente o marcador [SITE-LIVRE] abre um horário"
-      (is (= ["site-free"] (mapv :google-event-id (slots-fn [free-event])))))
+    (testing "[DISPONÍVEL] azul/Pavão abre um horário"
+      (is (= ["blue-available"] (mapv :google-event-id (slots-fn [free-event]))))
+      (is (= ["standard-blue-available"] (mapv :google-event-id (slots-fn [blue-event])))))
+    (testing "o mesmo título com cor não permitida não abre horário"
+      (is (empty? (slots-fn [wrong-color-event]))))
     (testing "um evento comum sobreposto bloqueia o horário para o site"
       (is (empty? (slots-fn [free-event busy-event]))))
     (testing "eventos em outro horário não escondem a disponibilidade"
-      (is (= ["site-free"] (mapv :google-event-id (slots-fn [free-event different-event])))))))
+      (is (= ["blue-available"] (mapv :google-event-id (slots-fn [free-event different-event])))))))
 
 (deftest test-health-check
   (testing "Health check route"
