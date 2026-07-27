@@ -42,12 +42,12 @@
           mock-result [{:psicologa_id "psi1" :horarios_disponiveis pg-obj}]]
       (with-redefs [clojure.java.jdbc/query (fn [db-spec sql-params]
                                  (is (= db-spec @#'clojure-backend-api.core/db-spec))
-                                 (is (= ["SELECT psicologa_id, horarios_disponiveis FROM horarios"] sql-params))
+                                 (is (= ["SELECT psicologa_id, nome, horarios_disponiveis FROM horarios"] sql-params))
                                  mock-result)
                     clojure-backend-api.core/db-spec "mock-db-spec"] ; Ensure db-spec is not nil
         (let [result (get-all-schedules)]
           (is (= 1 (count result)))
-          (is (= {:psicologa_id "psi1" :horarios_disponiveis {:segunda ["09:00" "10:00"]}}
+          (is (= {:psicologa_id "psi1" :nome "Nome não cadastrado" :horarios_disponiveis {:segunda ["09:00" "10:00"]}}
                  (first result)))))))
 
   (testing "get-all-schedules with nil db-spec"
@@ -63,7 +63,7 @@
     (let [mock-psi {:id 1 :psicologa_id "psi1" :senha_hash "hashed_password"}]
       (with-redefs [clojure.java.jdbc/query (fn [db-spec sql-params]
                                  (is (= db-spec @#'clojure-backend-api.core/db-spec))
-                                 (is (= ["SELECT id, psicologa_id, senha_hash FROM horarios WHERE psicologa_id = ?" "psi1"] sql-params))
+                                 (is (= ["SELECT id, psicologa_id, nome, senha_hash FROM horarios WHERE CAST(psicologa_id AS TEXT) = ?" "psi1"] sql-params))
                                  [mock-psi])]
         (is (= mock-psi (get-psychologist-by-id "psi1"))))))
 
@@ -83,7 +83,7 @@
                                    (is (= "jsonb" (-> values :horarios_disponiveis .getType)))
                                    (is (= (json/generate-string new-schedule) (-> values :horarios_disponiveis .getValue)))
                                    (is (contains? values :atualizado_em))
-                                   (is (= ["psicologa_id = ?" "psi1"] where-params))
+                                   (is (= ["CAST(psicologa_id AS TEXT) = ?" "psi1"] where-params))
                                    [1])] ; Simulate one row updated
         (is (= [1] (update-schedule! "psi1" new-schedule))))))
 
@@ -189,6 +189,30 @@
         (is (= 200 (:status response)))
         (is (= "text/plain; charset=utf-8" (get-in response [:headers "Content-Type"])))
         (is (= "fake_metrics" (:body response)))))))
+
+(deftest test-google-event-availability-rule
+  (let [free-event {:id "site-free"
+                    :summary "[SITE-LIVRE] Atendimento"
+                    :status "confirmed"
+                    :start {:dateTime "2026-08-01T09:00:00-03:00"}
+                    :end {:dateTime "2026-08-01T09:50:00-03:00"}}
+        busy-event {:id "patient-event"
+                    :summary "Atendimento"
+                    :status "confirmed"
+                    :start {:dateTime "2026-08-01T09:20:00-03:00"}
+                    :end {:dateTime "2026-08-01T10:10:00-03:00"}}
+        different-event {:id "different-slot"
+                         :summary "Atendimento"
+                         :status "confirmed"
+                         :start {:dateTime "2026-08-01T11:00:00-03:00"}
+                         :end {:dateTime "2026-08-01T11:50:00-03:00"}}
+        slots-fn @#'clojure-backend-api.core/google-events->available-slots]
+    (testing "somente o marcador [SITE-LIVRE] abre um horário"
+      (is (= ["site-free"] (mapv :google-event-id (slots-fn [free-event])))))
+    (testing "um evento comum sobreposto bloqueia o horário para o site"
+      (is (empty? (slots-fn [free-event busy-event]))))
+    (testing "eventos em outro horário não escondem a disponibilidade"
+      (is (= ["site-free"] (mapv :google-event-id (slots-fn [free-event different-event])))))))
 
 (deftest test-health-check
   (testing "Health check route"
