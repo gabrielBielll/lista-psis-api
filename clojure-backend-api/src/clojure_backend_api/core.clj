@@ -733,18 +733,41 @@
       color-ids
       default-available-event-color-ids)))
 
+(defn- accept-default-color? []
+  ;; O documento aceita "Azul padrão", ou seja, o evento sem cor explícita
+  ;; (que herda a cor do calendário). Aceito por padrão; desative com
+  ;; GOOGLE_ACCEPT_DEFAULT_COLOR=false se algum calendário tiver cor padrão
+  ;; não-azul.
+  (not= "false" (some-> (env :google-accept-default-color) str/lower-case)))
+
 (defn- normalize-calendar-text [value]
   (-> (Normalizer/normalize (str (or value "")) Normalizer$Form/NFD)
       (str/replace #"\p{M}" "")
       str/upper-case))
 
+(defn- available-title? [summary]
+  ;; Tolerante a maiúsculas, acentos (via normalize), colchetes opcionais e
+  ;; pequenos erros de digitação: casa o radical DISPONIV — pega [DISPONÍVEL],
+  ;; DISPONIVEL, disponível, disponivel e plural. NUNCA casa INDISPONIVEL (é
+  ;; bloqueio) graças ao lookbehind (?<!IN), e não confunde com
+  ;; "disponibilidade/disponibilizar" (radical DISPONIB, não DISPONIV).
+  (boolean (re-find #"(?<!IN)DISPONIV" (normalize-calendar-text summary))))
+
+(defn- available-color? [event]
+  ;; Documento aceita "Pavão ou Azul padrão". Pavão=7 e Blueberry=9 são as
+  ;; cores azuis; "Azul padrão" = evento sem colorId explícito (herda a cor do
+  ;; calendário). Aceitamos ambos.
+  (let [color (str (:colorId event))]
+    (or (contains? (configured-available-event-color-ids) color)
+        (and (str/blank? color) (accept-default-color?)))))
+
 (defn- deep-available-event? [event]
   ;; Convenção operacional da Deep: o título identifica a intenção e a cor
-  ;; confirma o status. IDs 7 (Pavão) e 9 (Azul/Blueberry) são aceitos por
-  ;; padrão; a lista pode ser ajustada por ambiente sem alterar o código.
+  ;; confirma o status. A regra é flexível para captar variações reais de
+  ;; digitação e a cor padrão do calendário.
   (and (not= "cancelled" (:status event))
-       (str/includes? (normalize-calendar-text (:summary event)) "[DISPONIVEL]")
-       (contains? (configured-available-event-color-ids) (str (:colorId event)))
+       (available-title? (:summary event))
+       (available-color? event)
        (google-event-period event)))
 
 (defn- google-events->available-slots [events]
@@ -912,6 +935,104 @@
    :body (simple-prometheus-metrics)})
 
 ;;; ----------------------------------------------------------------
+;;; Diagnóstico de conformidade das agendas Google (somente admin)
+;;; ----------------------------------------------------------------
+;;; Verifica cada calendário vinculado contra a convenção documentada em
+;;; doc/google-calendar.md (título [DISPONÍVEL] + cor Pavão/Azul, com horário e
+;;; sem sobreposição). NÃO devolve título, paciente nem descrição: apenas
+;;; categorias, cor e motivo, para a clínica orientar cada psicóloga.
+;; Nomes das 11 cores de evento do Google Agenda (PT-BR). "" = sem colorId, ou
+;; seja, o evento usa a cor padrão do calendário (o "Azul padrão" do documento).
+(def ^:private google-color-name
+  {""   "sem-cor-explicita(padrao-do-calendario)"
+   "1"  "Lavanda" "2"  "Salvia" "3"  "Uva" "4"  "Flamingo" "5"  "Banana"
+   "6"  "Tangerina" "7"  "Pavao" "8"  "Grafite" "9"  "Mirtilo(Blueberry)"
+   "10" "Manjericao" "11" "Tomate"})
+
+(defn- classify-google-event [event blockers]
+  (let [has-title (available-title? (:summary event))
+        color (str (:colorId event))
+        no-color (str/blank? color)
+        explicit-blue (boolean (contains? (configured-available-event-color-ids) color))
+        color-accepted (available-color? event)
+        period (google-event-period event)
+        all-day (nil? period)
+        overlapped (boolean (and period (some #(slot-overlaps? period %) blockers)))
+        publishable (and has-title color-accepted (not all-day) (not overlapped))
+        reasons (cond-> []
+                  ;; título ok mas cor explícita não-azul (ex.: Banana/Sálvia)
+                  (and has-title (not no-color) (not explicit-blue))
+                  (conj "titulo-ok-mas-cor-fora-do-padrao")
+                  (and has-title all-day)
+                  (conj "titulo-ok-mas-dia-inteiro")
+                  (and has-title color-accepted (not all-day) overlapped)
+                  (conj "conforme-mas-sobreposto")
+                  ;; cor azul explícita porém sem o título [DISPONÍVEL]
+                  (and explicit-blue (not has-title))
+                  (conj "cor-azul-mas-sem-titulo"))]
+    {:has-title has-title :color color :no-color no-color
+     :explicit-blue explicit-blue :color-accepted color-accepted
+     :all-day all-day :overlapped overlapped :publishable publishable :reasons reasons}))
+
+(defn google-diagnostics-handler [request]
+  (with-role request #{:admin}
+    (fn [_]
+      (try
+        (if-not (and (required-google-config) (latest-google-account))
+          (-> (resp/response {:message "Google não conectado ou não configurado."})
+              (resp/status 400))
+          (let [access-token (google-access-token!)
+                start (Instant/now)
+                end (.plus start (Duration/ofDays 90))
+                color-ids (configured-available-event-color-ids)
+                connections (jdbc/query db-spec
+                                        ["SELECT psicologa_id, calendar_id, calendar_nome FROM google_calendar_connections ORDER BY psicologa_id"])]
+            (resp/response
+              {:coresAceitas (vec (sort color-ids))
+               :aceitaCorPadrao (accept-default-color?)
+               :janelaDias 90
+               :calendarios
+               (mapv
+                 (fn [conn]
+                   (let [events (->> (google-calendar-events! (:calendar_id conn) access-token start end)
+                                     (remove #(= "cancelled" (:status %))))
+                         blockers (->> events
+                                       (remove #(deep-available-event? %))
+                                       (keep google-event-period))
+                         classified (mapv #(classify-google-event % blockers) events)]
+                     {:psicologaId (:psicologa_id conn)
+                      :calendario (:calendar_nome conn)
+                      :totalEventos (count events)
+                      :eventosDiaInteiro (count (filter :all-day classified))
+                      :comTituloDisponivel (count (filter :has-title classified))
+                      :publicaveis (count (filter :publishable classified))
+                      ;; Foco do relatório: dos eventos com título [DISPONÍVEL],
+                      ;; qual cor cada um usou (é aqui que mora o "azul padrão").
+                      :disponivelPorCor
+                      (frequencies (->> classified
+                                        (filter :has-title)
+                                        (map #(google-color-name (:color %) (:color %)))))
+                      ;; "sem cor explícita" NÃO é mais erro (é o "Azul padrão");
+                      ;; entra aqui só como informação de quantos vieram assim.
+                      :comTituloECorPadrao
+                      (count (filter #(and (:has-title %) (:no-color %)) classified))
+                      :naoConformidades
+                      {:tituloOkMasCorErrada
+                       (count (filter #(and (:has-title %) (not (:no-color %)) (not (:explicit-blue %))) classified))
+                       :tituloOkMasDiaInteiro
+                       (count (filter #(and (:has-title %) (:all-day %)) classified))
+                       :conformeMasSobreposto
+                       (count (filter #(some #{"conforme-mas-sobreposto"} (:reasons %)) classified))
+                       :corAzulMasSemTitulo
+                       (count (filter #(some #{"cor-azul-mas-sem-titulo"} (:reasons %)) classified))}
+                      :distribuicaoCoresTodos
+                      (frequencies (map #(google-color-name (:color %) (:color %)) classified))}))
+                 connections)}))
+        (catch Exception e
+          (-> (resp/response {:message (or (.getMessage e) "Falha ao diagnosticar as agendas.")})
+              (resp/status 502)))))))
+
+;;; ----------------------------------------------------------------
 ;;; Rotas
 ;;; ----------------------------------------------------------------
 (defroutes app-routes
@@ -946,6 +1067,7 @@
       (GET "/calendars" request (google-calendars-handler request))
       (GET "/connections" request (google-connections-handler request))
       (POST "/connections" request (save-google-calendar-connection-handler request))
+      (GET "/diagnostics" request (google-diagnostics-handler request))
       (POST "/sync" request (sync-google-calendars-handler request)))
 
     ;; Rotas legadas: permanecem temporariamente para não interromper o site
