@@ -771,18 +771,15 @@
        (google-event-period event)))
 
 (defn- google-events->available-slots [events]
-  (let [regular-events (->> events
-                            ;; Qualquer evento que não seja um bloco azul
-                            ;; [DISPONÍVEL] bloqueia o intervalo: sessões,
-                            ;; [INDISPONÍVEL], férias e compromissos pessoais.
-                            (remove #(or (= "cancelled" (:status %)) (deep-available-event? %)))
-                            (keep #(when-let [period (google-event-period %)] period)))]
-    (->> events
-         (filter deep-available-event?)
-         (keep (fn [event]
-                 (let [period (google-event-period event)]
-                   (when-not (some #(slot-overlaps? period %) regular-events)
-                     {:google-event-id (:id event) :start (:start period) :end (:end period)})))))))
+  ;; Decisão operacional da Deep: o [DISPONÍVEL] azul SEMPRE vence. Um evento
+  ;; marcado como disponível é publicado mesmo que haja outro evento sobreposto
+  ;; (ex.: um [INDISPONÍVEL] esquecido embaixo). A intenção explícita da psi
+  ;; prevalece; bloqueios pontuais devem ser feitos por exceção manual no gestor.
+  (->> events
+       (filter deep-available-event?)
+       (mapv (fn [event]
+               (let [period (google-event-period event)]
+                 {:google-event-id (:id event) :start (:start period) :end (:end period)})))))
 
 (defn- sync-calendar-connection! [connection access-token start end]
   (let [calendar-id (:calendar_id connection)
@@ -957,16 +954,16 @@
         color-accepted (available-color? event)
         period (google-event-period event)
         all-day (nil? period)
+        ;; Sobreposição não bloqueia mais (o [DISPONÍVEL] sempre vence). Mantido
+        ;; só como informação no diagnóstico.
         overlapped (boolean (and period (some #(slot-overlaps? period %) blockers)))
-        publishable (and has-title color-accepted (not all-day) (not overlapped))
+        publishable (and has-title color-accepted (not all-day))
         reasons (cond-> []
                   ;; título ok mas cor explícita não-azul (ex.: Banana/Sálvia)
                   (and has-title (not no-color) (not explicit-blue))
                   (conj "titulo-ok-mas-cor-fora-do-padrao")
                   (and has-title all-day)
                   (conj "titulo-ok-mas-dia-inteiro")
-                  (and has-title color-accepted (not all-day) overlapped)
-                  (conj "conforme-mas-sobreposto")
                   ;; cor azul explícita porém sem o título [DISPONÍVEL]
                   (and explicit-blue (not has-title))
                   (conj "cor-azul-mas-sem-titulo"))]
@@ -1016,13 +1013,15 @@
                       ;; entra aqui só como informação de quantos vieram assim.
                       :comTituloECorPadrao
                       (count (filter #(and (:has-title %) (:no-color %)) classified))
+                      ;; Informativo: [DISPONÍVEL] publicados mesmo sobrepostos
+                      ;; a outro evento (não é erro — o disponível sempre vence).
+                      :disponivelSobrepostoPublicado
+                      (count (filter #(and (:publishable %) (:overlapped %)) classified))
                       :naoConformidades
                       {:tituloOkMasCorErrada
                        (count (filter #(and (:has-title %) (not (:no-color %)) (not (:explicit-blue %))) classified))
                        :tituloOkMasDiaInteiro
                        (count (filter #(and (:has-title %) (:all-day %)) classified))
-                       :conformeMasSobreposto
-                       (count (filter #(some #{"conforme-mas-sobreposto"} (:reasons %)) classified))
                        :corAzulMasSemTitulo
                        (count (filter #(some #{"cor-azul-mas-sem-titulo"} (:reasons %)) classified))}
                       :distribuicaoCoresTodos
