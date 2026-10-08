@@ -17,7 +17,7 @@
     [metrics.ring.instrument :refer [instrument]])
   (:import (org.postgresql.util PGobject)
            (java.net URI URLEncoder)
-           (java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers HttpRequest$BodyPublishers)
+           (java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers HttpRequest$BodyPublishers HttpTimeoutException)
            (java.nio.charset StandardCharsets)
            (java.security MessageDigest SecureRandom)
            (java.text Normalizer Normalizer$Form)
@@ -454,7 +454,15 @@
 ;;; ----------------------------------------------------------------
 ;;; Google Agenda: OAuth central e sincronização automática
 ;;; ----------------------------------------------------------------
-(defonce ^:private google-http-client (HttpClient/newHttpClient))
+;; Sem timeouts, uma chamada ao Google que não responde prende para sempre a
+;; thread única do sincronizador e as requisições do painel administrativo.
+(def ^:private google-connect-timeout (Duration/ofSeconds 10))
+(def ^:private google-request-timeout (Duration/ofSeconds 30))
+
+(defonce ^:private google-http-client
+  (-> (HttpClient/newBuilder)
+      (.connectTimeout google-connect-timeout)
+      (.build)))
 (defonce ^:private google-sync-executor (atom nil))
 
 (defn- required-google-config []
@@ -473,19 +481,36 @@
                    (URLEncoder/encode (str value) "UTF-8"))))
        (str/join "&")))
 
+(defn- google-error-detail [parsed]
+  ;; O endpoint OAuth responde {:error "invalid_grant" :error_description "..."};
+  ;; a Calendar API responde {:error {:code 403 :message "..."}}.
+  (let [error (:error parsed)]
+    (if (map? error)
+      (:message error)
+      (->> [error (:error_description parsed)]
+           (remove str/blank?)
+           (str/join ": ")))))
+
 (defn- google-request! [request]
-  (let [response (.send google-http-client request (HttpResponse$BodyHandlers/ofString))
+  (let [response (try
+                   (.send google-http-client request (HttpResponse$BodyHandlers/ofString))
+                   (catch HttpTimeoutException _
+                     (throw (ex-info "A Google Agenda não respondeu dentro do tempo limite." {:timeout true}))))
         status (.statusCode response)
         body (.body response)
-        parsed (when-not (str/blank? body) (json/parse-string body true))]
+        parsed (when-not (str/blank? body)
+                 (try (json/parse-string body true) (catch Exception _ nil)))]
     (if (<= 200 status 299)
       parsed
-      (throw (ex-info "A Google Agenda recusou a solicitação."
-                      {:status status :google-error parsed})))))
+      (let [detail (google-error-detail parsed)]
+        (throw (ex-info (str "A Google Agenda recusou a solicitação (HTTP " status ")"
+                             (when-not (str/blank? detail) (str ": " detail)))
+                        {:status status :google-error parsed}))))))
 
 (defn- google-post-form! [url params]
   (google-request!
     (-> (HttpRequest/newBuilder (URI/create url))
+        (.timeout google-request-timeout)
         (.header "Content-Type" "application/x-www-form-urlencoded")
         (.POST (HttpRequest$BodyPublishers/ofString (form-encode params)))
         (.build))))
@@ -493,6 +518,7 @@
 (defn- google-get! [url access-token]
   (google-request!
     (-> (HttpRequest/newBuilder (URI/create url))
+        (.timeout google-request-timeout)
         (.header "Authorization" (str "Bearer " access-token))
         (.GET)
         (.build))))
@@ -811,10 +837,27 @@
                       ["psicologa_id = ?" psychologist-id])
         (throw e)))))
 
+(defn- record-sync-error-for-all-connections! [message]
+  (jdbc/update! db-spec :google_calendar_connections
+                {:ultimo_erro message
+                 :atualizado_em (Timestamp/from (Instant/now))}
+                ["1 = 1"]))
+
+(defn- sync-access-token! []
+  ;; A falha ao obter o token acontece antes do laço por agenda; sem este
+  ;; registro, o painel continuaria exibindo a última sincronização sem erro.
+  (try
+    (google-access-token!)
+    (catch Exception e
+      (record-sync-error-for-all-connections!
+        (str "Falha ao autenticar na conta Google da Deep: "
+             (or (.getMessage e) "erro desconhecido")))
+      (throw e))))
+
 (defn sync-google-calendars! []
   (if-not (and db-spec (required-google-config) (latest-google-account))
     {:synced 0 :reason "Google não conectado ou não configurado."}
-    (let [access-token (google-access-token!)
+    (let [access-token (sync-access-token!)
           start (Instant/now)
           end (.plus start (Duration/ofDays 90))
           connections (jdbc/query db-spec
@@ -828,7 +871,8 @@
         (resp/response (sync-google-calendars!))
         (catch Exception e
           (println (str "ERRO na sincronização Google: " (.getMessage e)))
-          (-> (resp/response {:message "Não foi possível sincronizar as agendas Google."})
+          (-> (resp/response {:message (str "Não foi possível sincronizar as agendas Google: "
+                                            (or (.getMessage e) "erro desconhecido"))})
               (resp/status 502)))))))
 
 (defn- configured-sync-interval []
