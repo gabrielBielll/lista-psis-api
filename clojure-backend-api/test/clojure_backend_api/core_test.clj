@@ -246,6 +246,49 @@
     (testing "um horário inválido não interrompe a disponibilidade pública"
       (is (= 3 (count slots))))))
 
+(deftest test-public-psychologist-profiles
+  (let [app @#'clojure-backend-api.core/app
+        get-json (fn [uri query-string]
+                   (let [response (app {:uri uri :request-method :get :query-string query-string})]
+                     [(:status response) (json/parse-string (:body response) true)]))]
+    (testing "lista os perfis públicos com o mesmo id usado por /api/availability"
+      (let [[status body] (get-json "/api/psicologas" nil)
+            profiles (:psicologas body)]
+        (is (= 200 status))
+        (is (= ["1" "2" "3" "4" "5" "6"] (mapv :id profiles)))
+        (is (every? #(clojure.string/starts-with? (:fotoUrl %) "https://www.deepsaude.com/psicologas_fotos/") profiles))
+        (is (every? #(and (:nome %) (:crp %) (:abordagem %) (seq (:especialidades %))) profiles))
+        (is (not-any? #(contains? % :foto) profiles))
+        (is (not-any? #(contains? % :horarios) profiles))))
+
+    (testing "busca uma psicóloga pelo id"
+      (let [[status body] (get-json "/api/psicologas/1" nil)]
+        (is (= 200 status))
+        (is (= "Karine Dos Santos Carvalho" (:nome body)))))
+
+    (testing "id inexistente responde 404"
+      (let [[status body] (get-json "/api/psicologas/99" nil)]
+        (is (= 404 status))
+        (is (= "Psicóloga não encontrada." (:message body)))))
+
+    (testing "incluirHorarios=true anexa os slots públicos de cada perfil"
+      (with-redefs [clojure-backend-api.core/availability-for-psychologist
+                    (fn [psychologist-id _ _]
+                      (if (= "1" psychologist-id)
+                        [{:start (Instant/parse "2026-10-21T13:00:00Z")
+                          :end (Instant/parse "2026-10-21T14:00:00Z")
+                          :source :google}]
+                        []))]
+        (let [[status body] (get-json "/api/psicologas/1" "incluirHorarios=true")]
+          (is (= 200 status))
+          (is (= [{:start "2026-10-21T13:00:00Z" :end "2026-10-21T14:00:00Z" :available true}]
+                 (:horarios body))))))
+
+    (testing "intervalo de datas inválido responde 400"
+      (let [[status _] (get-json "/api/psicologas"
+                                 "incluirHorarios=true&from=2026-10-22T00:00:00Z&to=2026-10-21T00:00:00Z")]
+        (is (= 400 status))))))
+
 (deftest test-health-check
   (testing "Health check route"
     (let [app @#'clojure-backend-api.core/app

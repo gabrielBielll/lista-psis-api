@@ -409,6 +409,64 @@
       (-> (resp/response {:message (or (.getMessage e) "Intervalo de datas inválido.")})
           (resp/status 400)))))
 
+;;; ----------------------------------------------------------------
+;;; Perfis públicos das psicólogas
+;;; ----------------------------------------------------------------
+(def ^:private default-public-site-url "https://www.deepsaude.com")
+
+(defn- public-site-url []
+  (str/replace (or (env :public-site-url) default-public-site-url) #"/+$" ""))
+
+;; Os perfis ficam em resources/psicologas.json; o `id` é o mesmo
+;; `psychologistId` usado por /api/availability.
+(def ^:private psychologist-profiles
+  (delay (-> "psicologas.json" io/resource slurp (json/parse-string true))))
+
+(defn- public-profile [profile]
+  (-> profile
+      (dissoc :foto)
+      (assoc :fotoUrl (str (public-site-url) (:foto profile)))))
+
+(defn- include-availability? [request]
+  (= "true" (some-> (get-in request [:params "incluirHorarios"]) str/lower-case)))
+
+(defn- with-availability [profile {:keys [start end]}]
+  (assoc profile :horarios (mapv public-slot (availability-for-psychologist (:id profile) start end))))
+
+(defn- profiles-response [request profiles]
+  ;; Os horários são opcionais (?incluirHorarios=true) e aceitam os mesmos
+  ;; parâmetros from/to de /api/availability.
+  (let [with-slots (include-availability? request)
+        range (when with-slots
+                (try
+                  (date-range-from-request request)
+                  (catch Exception e
+                    {:error (or (.getMessage e) "Intervalo de datas inválido.")})))]
+    (if (:error range)
+      (-> (resp/response {:message (:error range)}) (resp/status 400))
+      (try
+        (resp/response
+          (mapv #(cond-> (public-profile %) with-slots (with-availability range)) profiles))
+        (catch Exception e
+          (println (str "ERRO ao montar perfis com horários: " (.getMessage e)))
+          (-> (resp/response {:message "Não foi possível consultar os horários."})
+              (resp/status 503)))))))
+
+(defn psychologists-handler [request]
+  (let [response (profiles-response request @psychologist-profiles)]
+    (if (= 200 (:status response))
+      (update response :body (fn [profiles] {:psicologas profiles}))
+      response)))
+
+(defn psychologist-handler [request psychologist-id]
+  (if-let [profile (some #(when (= (str psychologist-id) (:id %)) %) @psychologist-profiles)]
+    (let [response (profiles-response request [profile])]
+      (if (= 200 (:status response))
+        (update response :body first)
+        response))
+    (-> (resp/response {:message "Psicóloga não encontrada."})
+        (resp/status 404))))
+
 (defn- create-manual-override! [psychologist-id account {:keys [start end available note]}]
   (let [slot-start (parse-instant start)
         slot-end (parse-instant end)]
@@ -1095,6 +1153,11 @@
 
     ;; Contrato novo do site público: somente slots, sem dados de eventos.
     (GET "/availability" request (public-availability-handler request))
+
+    ;; Perfis públicos (nome, CRP, abordagem, especialidades), sem login.
+    (GET "/psicologas" request (psychologists-handler request))
+    (GET "/psicologas/:psychologist-id" [psychologist-id :as request]
+      (psychologist-handler request psychologist-id))
 
     ;; Exceções pontuais: a psicóloga só cria/remove as próprias; o admin pode
     ;; escolher a psicóloga no corpo da requisição.
